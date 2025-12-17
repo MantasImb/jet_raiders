@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+
+# cp ~/.config/scripts/.ready-tmux.template-rust .ready-tmux
+
+# A template script that can be copied and modified to run when a tmux session is ready.
+# Put this script into the root directory of a project and it will be executed when the tmux session is started.
+
+tmux send-keys -t neovim 'nvim ./client/' C-m
+# `exec zsh` needs to be added because otherwise the shell will exit when the command finishes.
+tmux neww -n "server" 'nvim ./server/; exec zsh'
+tmux neww -n "agent" 'cd ./server/&&cargo watch -x check -x test -x run; exec zsh'
+tmux neww -n "watch" 'cd ./server/&&cargo watch -x check -x test -x run; exec zsh'
+tmux neww -n "terminal" 'git status; exec zsh'
+# The first window is always named neovim. We switch to it.
+tmux select-window -t neovim
