@@ -29,24 +29,39 @@ graph TD
     State -->|World Snapshot| Axum
 ```
 
+## 1.1 Multi-Lobby Architecture
+
+The server acts as a **Lobby Manager**.
+
+1.  **Connection**: Client connects to `ws://server/ws`.
+2.  **Handshake**: Client sends `Join { lobby_id: "Room1" }`.
+3.  **Routing**:
+    - If "Room1" exists: Connect client to that running game loop.
+    - If "Room1" is missing: Create a new `GameLoop` task for it.
+4.  **Isolation**: Each Lobby runs in its own Tokio Task. A crash or lag spike
+    in one lobby does not affect others.
+
 ## 2. Server Project Structure (`server/src/`)
 
-We will use a modular "Simple Structs" approach. This keeps the code readable and easy to navigate for a first multiplayer project.
+We will use a modular "Simple Structs" approach. We will implement **Multiple
+Lobbies** support, where the main server manages multiple isolated game
+sessions.
 
 ```text
 server/
 ├── Cargo.toml          # Dependencies: axum, tokio, serde, etc.
 └── src/
-    ├── main.rs         # Entry point. Sets up Axum, Tokio, and starts the Game Loop.
-    ├── config.rs       # Shared constants (Tick Rate, Map Size, Speeds).
-    ├── protocol.rs     # The "Language". Shared Structs/Enums for Network Messages.
-    ├── net.rs          # WebSocket handling. Handshakes, serialization, sending/receiving.
-    ├── game.rs         # The Core Loop. Manages time, processes inputs, runs systems.
+    ├── main.rs         # Entry point. Sets up Axum and the LobbyManager.
+    ├── config.rs       # Shared constants.
+    ├── protocol.rs     # The "Language". Shared Structs/Enums.
+    ├── net.rs          # WebSocket handling. Handshakes & routing to lobbies.
+    ├── lobby.rs        # Manages active game sessions (HashMap<ID, Channel>).
+    ├── game.rs         # The Game Loop (One instance per Lobby).
     ├── state.rs        # Data definitions: GameState, Player, Projectile.
     └── systems/        # Logic Modules.
         ├── mod.rs
-        ├── movement.rs # Updates positions (Velocity, Thrust, Drag).
-        └── combat.rs   # Shooting, Collisions, Health, Scoring.
+        ├── movement.rs
+        └── combat.rs
 ```
 
 ## 3. Communication Protocol (`protocol.rs`)
@@ -59,8 +74,8 @@ Sent by the Godot client to the Rust server.
 
 ```rust
 enum ClientMessage {
-    // Sent immediately after connection to identify the user
-    Login { username: String },
+    // Initial handshake to join a specific room
+    Join { lobby_id: String, username: String },
 
     // Sent every frame/tick by the client
     Input {
