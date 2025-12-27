@@ -1,86 +1,245 @@
-use axum::extract::State;
-use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::{Router, response::IntoResponse, routing::get};
-use std::net::SocketAddr;
-use std::sync::Arc;
-use std::time::Duration;
-use tokio::sync::broadcast;
+use axum::{
+    Router,
+    extract::{
+        State,
+        ws::{Message, WebSocket, WebSocketUpgrade},
+    },
+    response::IntoResponse,
+    routing::get,
+};
+use serde::{Deserialize, Serialize};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
+use tokio::sync::{broadcast, mpsc, watch};
 
-// TODO: Why is there a need for shared state?
+#[derive(Clone)]
 struct AppState {
-    // You can add shared state here if needed
-    tx: broadcast::Sender<String>,
+    input_tx: mpsc::Sender<InputEvent>,
+    world_tx: broadcast::Sender<WorldUpdate>,
+    server_state_tx: watch::Sender<ServerState>,
 }
 
-/// TODO: Understand the app_state required in this case
-/// TODO: Understand the broadcast and the channel
+#[derive(Debug, Clone, Serialize)]
+struct WorldUpdate {
+    tick: u64,
+    // For real games you’d send deltas or a filtered snapshot
+    entities: Vec<EntityState>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct EntityState {
+    id: u32,
+    x: f32,
+    y: f32,
+    rot: f32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+enum ServerState {
+    Lobby,
+    MatchStarting { in_seconds: u32 },
+    MatchRunning,
+    MatchEnded,
+}
+
+#[derive(Debug, Clone)]
+struct InputEvent {
+    player_id: u64,
+    input: PlayerInput,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "type", content = "data")]
+enum PlayerInput {
+    Move { dx: f32, dy: f32 },
+    Rotate { drot: f32 },
+}
 
 #[tokio::main]
 async fn main() {
-    // Create a broadcast channel for sending messages to all connected clients
-    let (tx, _rx) = broadcast::channel(100);
+    // Inputs: many client tasks -> one world task
+    let (input_tx, input_rx) = mpsc::channel::<InputEvent>(1024);
 
-    let app_state = Arc::new(AppState { tx: tx.clone() });
+    // World updates: one world task -> many clients
+    let (world_tx, _world_rx) = broadcast::channel::<WorldUpdate>(128);
 
-    // Spawn a background task that sends a message every second
-    // TODO: Does this spawn a new thread and what are tasks
-    tokio::spawn(async move {
-        loop {
-            tokio::time::sleep(Duration::from_secs(1)).await;
-            // Send message to all active subscibers
-            let _ = tx.send("Server tick".to_string());
-        }
+    // Server state: one producer -> many clients (latest only)
+    let (server_state_tx, _server_state_rx) = watch::channel::<ServerState>(ServerState::Lobby);
+
+    let state = Arc::new(AppState {
+        input_tx,
+        world_tx,
+        server_state_tx,
     });
 
-    // Build our application with a route
+    tokio::spawn(world_task(
+        input_rx,
+        state.world_tx.clone(),
+        state.server_state_tx.clone(),
+    ));
+
     let app = Router::new()
         .route("/ws", get(ws_handler))
-        .with_state(app_state);
+        .with_state(state);
 
-    // Define the address to run our server on
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
-    println!("Listening on {}", addr);
+    println!("listening on {addr}");
 
-    // Run the server
-    let listener = tokio::net::TcpListener::bind(addr)
-        .await
-        .expect("Failed to bind to address");
-
-    axum::serve(listener, app)
-        .await
-        .expect("Failed to start server");
+    let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
+    axum::serve(listener, app).await.unwrap();
 }
 
-/// The handler for the HTTP request (this gets called when the HTTP request lands at the start
-/// of websocket negotiation). We upgrade the request to a WebSocket connection.
 async fn ws_handler(ws: WebSocketUpgrade, State(state): State<Arc<AppState>>) -> impl IntoResponse {
     ws.on_upgrade(|socket| handle_socket(socket, state))
 }
-/// Actual websocket statemachine (one will be spawned per connection)
+
 async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
-    println!("Client connected");
-    let mut rx = state.tx.subscribe();
+    // For demo purposes only. Real code: authenticate and assign player IDs properly.
+    let player_id = rand_id();
+
+    let mut world_rx = state.world_tx.subscribe();
+    let mut server_state_rx = state.server_state_tx.subscribe();
+
+    // Send current server state immediately (watch has a current value).
+    let initial = server_state_rx.borrow().clone();
+    if send_server_state(&mut socket, &initial).await.is_err() {
+        return;
+    }
 
     loop {
         tokio::select! {
-            Some(msg) = socket.recv() => {
-                if let Ok(msg) = msg {
-                    if let Message::Text(text) = msg {
-                        println!("Received: {}", text);
-                        // Echo back
-                        if socket.send(Message::Text(format!("Echo: {}", text).into())).await.is_err() { break;}
+            // Client -> server: inputs
+            incoming = socket.recv() => {
+                let Some(Ok(msg)) = incoming else { break; };
+
+                match msg {
+                    Message::Text(text) => {
+                        // Expect JSON inputs, e.g.:
+                        // {"type":"Move","data":{"dx":1.0,"dy":0.0}}
+                        if let Ok(input) = serde_json::from_str::<PlayerInput>(&text) {
+                            // Avoid stalling the connection task if the input queue is full.
+                            // For a game, dropping inputs under load is often preferable
+                            // to backpressuring reads.
+                            let _ = state.input_tx.try_send(InputEvent { player_id, input });
+                        }
                     }
-                } else {
-                    // Client disconnected
-                    break;
+                    Message::Close(_) => break,
+                    _ => {}
                 }
             }
-            // Handle broadcast messages from the server
-            Ok(msg) = rx.recv() => {
-                if socket.send(Message::Text(msg.into())).await.is_err() {
+
+            // World -> client: broadcast updates
+            world_msg = world_rx.recv() => {
+                match world_msg {
+                    Ok(update) => {
+                        if send_world_update(&mut socket, &update).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(_n)) => {
+                        // Client is too slow and missed some updates.
+                        // You might send a full snapshot here instead.
+                        continue;
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
+            }
+
+            // Server state -> client: match lifecycle etc. (latest only)
+            changed = server_state_rx.changed() => {
+                if changed.is_err() {
+                    break;
+                }
+                let st = server_state_rx.borrow().clone();
+                if send_server_state(&mut socket, &st).await.is_err() {
                     break;
                 }
             }
         }
     }
+
+    println!("client {player_id} disconnected");
+}
+
+async fn send_world_update(
+    socket: &mut WebSocket,
+    update: &WorldUpdate,
+) -> Result<(), axum::Error> {
+    let txt = serde_json::to_string(update).unwrap();
+    socket.send(Message::Text(txt.into())).await
+}
+
+async fn send_server_state(socket: &mut WebSocket, state: &ServerState) -> Result<(), axum::Error> {
+    let txt = serde_json::to_string(state).unwrap();
+    socket.send(Message::Text(txt.into())).await
+}
+
+async fn world_task(
+    mut input_rx: mpsc::Receiver<InputEvent>,
+    world_tx: broadcast::Sender<WorldUpdate>,
+    server_state_tx: watch::Sender<ServerState>,
+) {
+    // Demo world state
+    let mut tick: u64 = 0;
+    let mut entities = vec![
+        EntityState {
+            id: 1,
+            x: 0.0,
+            y: 0.0,
+            rot: 0.0,
+        },
+        EntityState {
+            id: 2,
+            x: 5.0,
+            y: 2.0,
+            rot: 0.0,
+        },
+    ];
+
+    // Demo “match lifecycle”
+    let _ = server_state_tx.send(ServerState::MatchStarting { in_seconds: 3 });
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    let _ = server_state_tx.send(ServerState::MatchRunning);
+
+    let mut interval = tokio::time::interval(Duration::from_millis(2000)); // 50ms
+
+    loop {
+        interval.tick().await;
+
+        // Drain all currently queued inputs without blocking the tick.
+        while let Ok(ev) = input_rx.try_recv() {
+            // Apply input to demo entity (id=1 for simplicity)
+            let e = &mut entities[0];
+            match ev.input {
+                PlayerInput::Move { dx, dy } => {
+                    e.x += dx;
+                    e.y += dy;
+                }
+                PlayerInput::Rotate { drot } => {
+                    e.rot += drot;
+                }
+            }
+        }
+
+        tick += 1;
+
+        // Broadcast world update
+        let update = WorldUpdate {
+            tick,
+            entities: entities.clone(),
+        };
+        let _ = world_tx.send(update);
+
+        // Demo end match
+        if tick == 400 {
+            let _ = server_state_tx.send(ServerState::MatchEnded);
+        }
+    }
+}
+
+fn rand_id() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos() as u64
 }
