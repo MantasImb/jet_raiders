@@ -5,12 +5,14 @@
 # A template script that can be copied and modified to run when a tmux session is ready.
 # Put this script into the root directory of a project and it will be executed when the tmux session is started.
 
-tmux send-keys -t neovim 'nvim ./client/' C-m
+tmux send-keys -t neovim 'nvim .' C-m
 # `exec zsh` needs to be added because otherwise the shell will exit when the command finishes.
+tmux neww -n "client" 'nvim .client/; exec zsh'
 tmux neww -n "server" 'nvim ./server/; exec zsh'
-tmux neww -n "root" 'nvim .; exec zsh'
-tmux neww -n "agent" 'gemini'
-tmux neww -n "watch" 'cd ./server/&&cargo watch -x check -x test -x run; exec zsh'
+tmux neww -n "agent" 'gemini; exec zsh'
+tmux neww -n "watch" -c ./server
+# sending keys so that i can just press enter to start watching, but can also clear the terminal if needed (for example if i want to add a crate)
+tmux send-keys -t watch 'cargo watch -x check -x run'
 tmux neww -n "terminal" 'git status; exec zsh'
 # The first window is always named neovim. We switch to it.
 tmux select-window -t neovim
