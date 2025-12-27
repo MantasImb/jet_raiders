@@ -8,7 +8,8 @@
 tmux send-keys -t neovim 'nvim ./client/' C-m
 # `exec zsh` needs to be added because otherwise the shell will exit when the command finishes.
 tmux neww -n "server" 'nvim ./server/; exec zsh'
-tmux neww -n "agent" 'cd ./server/&&cargo watch -x check -x test -x run; exec zsh'
+tmux neww -n "root" 'nvim .; exec zsh'
+tmux neww -n "agent" 'gemini'
 tmux neww -n "watch" 'cd ./server/&&cargo watch -x check -x test -x run; exec zsh'
 tmux neww -n "terminal" 'git status; exec zsh'
 # The first window is always named neovim. We switch to it.
