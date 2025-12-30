@@ -33,12 +33,12 @@ graph TD
 
 The server acts as a **Lobby Manager**.
 
-1.  **Connection**: Client connects to `ws://server/ws`.
-2.  **Handshake**: Client sends `Join { lobby_id: "Room1" }`.
-3.  **Routing**:
+1. **Connection**: Client connects to `ws://server/ws`.
+2. **Handshake**: Client sends `Join { lobby_id: "Room1" }`.
+3. **Routing**:
     - If "Room1" exists: Connect client to that running game loop.
     - If "Room1" is missing: Create a new `GameLoop` task for it.
-4.  **Isolation**: Each Lobby runs in its own Tokio Task. A crash or lag spike
+4. **Isolation**: Each Lobby runs in its own Tokio Task. A crash or lag spike
     in one lobby does not affect others.
 
 ## 2. Server Project Structure (`server/src/`)

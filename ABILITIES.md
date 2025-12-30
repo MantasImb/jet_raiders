@@ -21,7 +21,7 @@ we will use `Enums` and a generic `AbilityState` struct.
 
 ### The `AbilityType` Enum
 
-This defines *what* ability is equipped.
+This defines _what_ ability is equipped.
 
 ```rust
 #[derive(Clone, Copy, PartialEq)]
@@ -90,15 +90,15 @@ clean.
 
 ### New System: `abilities.rs`
 
-This system runs *before* movement and combat.
+This system runs _before_ movement and combat.
 
-1.  **Check Input**: Did the player press the Ability Key?
-2.  **Check Cooldown**: Is `secondary_cooldown.is_ready()`?
-3.  **Activate**:
+1. **Check Input**: Did the player press the Ability Key?
+2. **Check Cooldown**: Is `secondary_cooldown.is_ready()`?
+3. **Activate**:
     - **Dash**: Add a sudden burst to `velocity` vector.
     - **Invisibility**: Set `is_invisible = true` and `secondary_active_until`.
     - **Shield**: Set `is_shielded = true` and `secondary_active_until`.
-4.  **Manage Durations**:
+4. **Manage Durations**:
     - If `current_time > secondary_active_until`, disable effects (set flags
       to false).
 
@@ -107,9 +107,9 @@ This system runs *before* movement and combat.
 - **Shooting**: Switch on `weapon_type` to decide what projectile to spawn
   (fast & weak, or slow & strong).
 - **Damage**:
-    - If `target.is_shielded`, ignore damage.
-    - If `target.is_invisible`, projectiles might still hit (lucky shot), or
-      pass through depending on design.
+  - If `target.is_shielded`, ignore damage.
+  - If `target.is_invisible`, projectiles might still hit (lucky shot), or
+    pass through depending on design.
 
 ## 4. Network Protocol Updates
 
@@ -126,9 +126,9 @@ pub struct PlayerData {
 }
 ```
 
-*Note: For true competitive invisibility, the server should NOT send the
+_Note: For true competitive invisibility, the server should NOT send the
 position of invisible players to enemies. For this project, sending it with a
-flag is acceptable for simplicity.*
+flag is acceptable for simplicity._
 
 ## 5. Stats & Progression
 
@@ -160,16 +160,18 @@ pub struct PlayerStats {
 
 When a player chooses an upgrade, we simply modify these values.
 
-*   **Upgrade: "Heavy Barrel"**
-    ```rust
-    stats.damage_mult *= 3.0;
-    stats.fire_rate_mult *= 2.0; // Increases cooldown (slower fire)
-    ```
+- **Upgrade: "Heavy Barrel"**
 
-*   **Upgrade: "Cooling System"**
-    ```rust
-    stats.heat_dissipation_mult *= 1.5;
-    ```
+  ```rust
+  stats.damage_mult *= 3.0;
+  stats.fire_rate_mult *= 2.0; // Increases cooldown (slower fire)
+  ```
+
+- **Upgrade: "Cooling System"**
+
+  ```rust
+  stats.heat_dissipation_mult *= 1.5;
+  ```
 
 ### Calculation in Systems
 
@@ -180,4 +182,3 @@ effective values on the fly.
 let effective_damage = BASE_DAMAGE * player.stats.damage_mult;
 let effective_cooldown = BASE_WEAPON_COOLDOWN * player.stats.fire_rate_mult;
 ```
-
