@@ -40,26 +40,9 @@ func _physics_process(delta: float) -> void:
 		if parent.player_id != network_manager.local_player_id:
 			return
 		
-		# Debug: Verify we are sending
-		# print("Sending input for ID: ", parent.player_id)
-			
-		# Calculate movement vector based on current rotation
-		var rotation = parent.rotation
-			
-		# Godot's UP is (0, -1).
-		var direction = Vector2.UP.rotated(rotation)
-		
-		# "Speed" and "Turn Rate" should ideally be server constants or synced.
-		# For now, we estimate a movement delta to send.
-		var speed_factor = 5.0 
-		var turn_factor = 0.1
-		
-		var movement = direction * throttle_input * speed_factor
-		
 		var packet = {
-			"dx": movement.x,
-			"dy": movement.y,
-			"rot": turn_input * turn_factor,
+			"thrust": throttle_input,
+			"turn": turn_input,
 			"shoot": shoot_input
 		}
 		
