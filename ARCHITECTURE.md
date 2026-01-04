@@ -12,12 +12,12 @@ state received from the server.
 
 ```mermaid
 graph TD
-    Client[Godot Web Client] <-->|WebSocket (JSON)| Axum[Rust Server (Axum)]
+    Client[Godot Web Client] <-->|WebSocket JSON| Axum[Rust Server Axum]
     Axum -->|Connection/Disconnection| GameLoop
     Axum -->|Player Inputs| InputQueue
 
     subgraph Rust Server
-        GameLoop[Game Loop (60 Hz)]
+        GameLoop[Game Loop 60 Hz]
         InputQueue[Input Queue]
         State[Game World State]
 

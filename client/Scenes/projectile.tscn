@@ -1,4 +1,4 @@
-[gd_scene load_steps=5 format=3 uid="uid://dmi0eqikdv2a6"]
+[gd_scene load_steps=4 format=3 uid="uid://dmi0eqikdv2a6"]
 
 [ext_resource type="Script" uid="uid://q7e3g801omgd" path="res://Scripts/Projectile.gd" id="1_k1cl8"]
 [ext_resource type="Texture2D" uid="uid://cp1n3h5hxm2ga" path="res://Sprites/Tiles/tile_0002.png" id="2_y0kec"]
@@ -6,14 +6,6 @@
 [sub_resource type="CapsuleShape2D" id="CapsuleShape2D_0tri7"]
 radius = 3.0
 height = 14.0
-
-[sub_resource type="SceneReplicationConfig" id="SceneReplicationConfig_ds7j7"]
-properties/0/path = NodePath(".:position")
-properties/0/spawn = true
-properties/0/replication_mode = 1
-properties/1/path = NodePath(".:rotation")
-properties/1/spawn = true
-properties/1/replication_mode = 1
 
 [node name="Projectile" type="Area2D"]
 script = ExtResource("1_k1cl8")
@@ -23,9 +15,6 @@ texture = ExtResource("2_y0kec")
 
 [node name="CollisionShape2D" type="CollisionShape2D" parent="."]
 shape = SubResource("CapsuleShape2D_0tri7")
-
-[node name="MultiplayerSynchronizer" type="MultiplayerSynchronizer" parent="."]
-replication_config = SubResource("SceneReplicationConfig_ds7j7")
 
 [node name="Timer" type="Timer" parent="."]
 wait_time = 3.0
