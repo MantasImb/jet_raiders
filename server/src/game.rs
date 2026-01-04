@@ -1,3 +1,4 @@
+use crate::config;
 use crate::protocol::{GameEvent, WorldUpdate};
 use crate::state::{EntityState, ServerState};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -15,8 +16,8 @@ pub async fn world_task(
     tokio::time::sleep(Duration::from_secs(3)).await;
     let _ = server_state_tx.send(ServerState::MatchRunning);
 
-    // Set tick rate to 60 Hz (approx 16ms), but for debugging lets keep this at 1000ms
-    let mut interval = tokio::time::interval(Duration::from_millis(1000));
+    // Tick rate (leave at 1 tick/sec for now).
+    let mut interval = tokio::time::interval(config::TICK_INTERVAL);
 
     loop {
         // Wait for next tick
@@ -48,9 +49,9 @@ pub async fn world_task(
                 GameEvent::Input { player_id, input } => {
                     // Apply input to correct entity
                     if let Some(e) = entities.iter_mut().find(|e| e.id == player_id) {
-                        e.x += input.dx;
-                        e.y += input.dy;
-                        e.rot += input.drot;
+                        e.x += input.thrust;
+                        e.y += input.thrust;
+                        e.rot += input.turn;
                         // println!("Applied input for {}", player_id);
                     }
                 }

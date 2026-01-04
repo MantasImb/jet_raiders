@@ -19,13 +19,13 @@ pub enum ServerMessage {
 #[derive(Debug, Clone, Deserialize)]
 pub struct PlayerInput {
     #[serde(default)]
-    pub dx: f32,
+    pub thrust: f32,
     #[serde(default)]
-    pub dy: f32,
-    #[serde(default)]
-    pub drot: f32,
+    pub turn: f32,
     #[serde(default)]
     pub shoot: bool,
+    // #[serde(default)]
+    // pub special: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

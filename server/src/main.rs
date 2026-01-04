@@ -4,6 +4,7 @@ mod lobby;
 mod net;
 mod protocol;
 mod state;
+mod tuning;
 mod utils;
 
 use crate::game::world_task;
@@ -19,10 +20,10 @@ use tokio::sync::{broadcast, mpsc, watch};
 async fn main() {
     // Setup Channels
     // input_tx/rx: All client inputs go to the single World Task.
-    let (input_tx, input_rx) = mpsc::channel::<GameEvent>(1024);
+    let (input_tx, input_rx) = mpsc::channel::<GameEvent>(config::INPUT_CHANNEL_CAPACITY);
 
     // world_tx/rx: World updates are broadcast to all clients.
-    let (world_tx, _world_rx) = broadcast::channel::<WorldUpdate>(128);
+    let (world_tx, _world_rx) = broadcast::channel::<WorldUpdate>(config::WORLD_BROADCAST_CAPACITY);
 
     // server_state_tx: High-level state (Lobby, MatchRunning) changes.
     let (server_state_tx, _server_state_rx) = watch::channel::<ServerState>(ServerState::Lobby);
