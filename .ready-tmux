@@ -9,7 +9,7 @@ tmux send-keys -t neovim 'nvim .' C-m
 # `exec zsh` needs to be added because otherwise the shell will exit when the command finishes.
 tmux neww -n "client" -c 'client/' 'nvim .; exec zsh'
 tmux neww -n "server" -c 'server/' 'nvim .; exec zsh'
-tmux neww -n "agent" 'gemini; exec zsh'
+tmux neww -n "agent" 'copilot; exec zsh'
 tmux neww -n "watch" -c ./server
 # sending keys so that i can just press enter to start watching, but can also clear the terminal if needed (for example if i want to add a crate)
 tmux send-keys -t watch 'cargo watch -x check -x run'
