@@ -21,8 +21,8 @@ impl Default for PlayerTuning {
     fn default() -> Self {
         Self {
             max_speed: 150.0,
-            turn_rate: 2.5,
-            throttle_rate: 1.0,
+            turn_rate: 3.0,
+            throttle_rate: 2.0,
             radius: 24.0,
         }
     }

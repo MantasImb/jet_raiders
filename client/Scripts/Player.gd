@@ -72,7 +72,10 @@ func _process(delta: float) -> void:
 	shadow.global_position = position + Vector2(0, 20)
 	
 	# Client-side Interpolation
-	position = position.lerp(target_position, smoothing_speed * delta)
+	if position.distance_to(target_position) < 50:
+		position = position.lerp(target_position, smoothing_speed * delta)
+	else:
+		position = target_position
 	rotation = lerp_angle(rotation, target_rotation, smoothing_speed * delta)
 
 func _physics_process(_delta: float) -> void:

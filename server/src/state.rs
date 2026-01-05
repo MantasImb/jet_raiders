@@ -1,4 +1,4 @@
-use crate::protocol::{GameEvent, WorldUpdate};
+use crate::protocol::{GameEvent, PlayerInput, WorldUpdate};
 use serde::Serialize;
 use tokio::sync::{broadcast, mpsc, watch};
 
@@ -10,6 +10,14 @@ pub struct AppState {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub enum ServerState {
+    Lobby,
+    MatchStarting { in_seconds: u32 },
+    MatchRunning,
+    MatchEnded,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct EntityState {
     pub id: u64,
     pub x: f32,
@@ -17,10 +25,24 @@ pub struct EntityState {
     pub rot: f32,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub enum ServerState {
-    Lobby,
-    MatchStarting { in_seconds: u32 },
-    MatchRunning,
-    MatchEnded,
+pub struct SimEntity {
+    pub id: u64,
+    pub x: f32,
+    pub y: f32,
+    pub rot: f32,
+
+    // Movement-only state (do not serialize to clients)
+    pub throttle: f32,           // 0.0..=1.0
+    pub last_input: PlayerInput, // last received input for this entity
+}
+
+impl From<&SimEntity> for EntityState {
+    fn from(e: &SimEntity) -> Self {
+        Self {
+            id: e.id,
+            x: e.x,
+            y: e.y,
+            rot: e.rot,
+        }
+    }
 }

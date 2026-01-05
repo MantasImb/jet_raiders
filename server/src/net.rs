@@ -233,7 +233,6 @@ fn handle_incoming_ws(
                     // TODO: Consider disconnecting or rate-limiting on repeated invalid JSON (anti-spam).
                     match serde_json::from_str::<PlayerInput>(&text) {
                         Ok(input) => {
-                            println!("Received input from player {}: {:?}", player_id, input);
                             // Forward input to World Task via Channel
                             match input_tx.try_send(GameEvent::Input { player_id, input }) {
                                 Ok(()) => {}

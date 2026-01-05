@@ -49,7 +49,6 @@ func send_input(input_data: Dictionary) -> void:
 		return
 		
 	var json_str = JSON.stringify(input_data)
-	print("sending", json_str)
 	socket.send_text(json_str)
 
 func _handle_server_message(json_str: String) -> void:
@@ -81,7 +80,6 @@ func _handle_server_message(json_str: String) -> void:
 			print("Game State Update: ", msg.data)
 
 func _handle_world_update(data: Dictionary) -> void:
-	print(data)
 	var entities = data.entities
 	var current_ids = []
 

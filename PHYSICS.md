@@ -29,24 +29,42 @@ forward direction.
 - `TURN_RATE`: Rotation speed in radians per second (e.g., 2.5).
 - `THROTTLE_RATE`: How fast throttle increases/decreases per second (e.g., 1.0).
 
+### Client Input Packet (Per Tick)
+
+Client-to-server inputs should match `CLIENT_NETWORKING.md`.
+
+```json
+{
+  "thrust": 1.0,
+  "turn": 0.0,
+  "shoot": true
+}
+```
+
+For movement, the server uses:
+
+- `thrust` (f32): throttle change input in `[-1.0, 1.0]` (from Godot `Input.get_axis`).
+- `turn` (f32): turn input in `[-1.0, 1.0]`.
+
 ### Update Logic (Per Tick)
 
 1. **Rotation**:
 
    ```rust
-   rotation += input.turn_axis * TURN_RATE * delta_time;
+   rotation += input.turn * TURN_RATE * delta_time;
    ```
 
 2. **Throttle**:
 
    ```rust
-   throttle += input.throttle_axis * THROTTLE_RATE * delta_time;
+   throttle += input.thrust * THROTTLE_RATE * delta_time;
    throttle = clamp(throttle, 0.0, 1.0);
    ```
 
 3. **Velocity Calculation**:
    - The velocity vector is derived purely from rotation and throttle.
-   - `direction = Vec2::new(-sin(rotation), -cos(rotation))` (Assuming 0 is Up/North).
+   - With **0 rad = up / -Y** and **clockwise-positive rotation** (Godot 2D), the forward vector is:
+     - `direction = Vec2::new(sin(rotation), -cos(rotation))`
    - `velocity = direction * throttle * MAX_SPEED`
 4. **Position Update**:
 
@@ -59,6 +77,9 @@ forward direction.
 The game world is a torus (loops around).
 
 - **Logic**: If a player moves past a border, they teleport to the opposite side.
+- **Server implementation**: currently hardcoded in `server/src/game.rs` (then passed into `MovementConfig`).
+- **Client rendering note**: because wrapping is a teleport, client-side interpolation should **snap** on large jumps (otherwise the ship will lerp across the whole screen).
+
 - **Implementation**:
 
   ```rust

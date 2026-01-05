@@ -16,7 +16,8 @@ The client connects to the server using WebSockets (`WebSocketPeer` in Godot).
 1. **Connecting**: The `NetworkManager` initializes a `WebSocketPeer` and
    attempts to connect.
 2. **Handshake**: Once connected, the server assigns a `player_id` (handled server-side).
-3. **Polling**: The client must call `socket.poll()` every frame (in `_process`)
+3. **First state**: The server sends the initial state when the player joins, so that the client can display its own entity.
+4. **Polling**: The client must call `socket.poll()` every frame (in `_process`)
    to process incoming packets and maintain the connection.
 
 ## 2. Sending Inputs

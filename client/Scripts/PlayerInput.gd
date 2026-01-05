@@ -19,10 +19,10 @@ var acc := 0.0
 
 func _physics_process(delta: float) -> void:
 	# Keep this for debugging purposes
-	acc += delta
-	if acc < 1.0:
-		return
-	acc -= 1.0  # keep remainder so it stays stable over time
+	# acc += delta
+	# if acc < 1.0:
+	# 	return
+	# acc -= 1.0  # keep remainder so it stays stable over time
 	
 	# 1. Gather Input
 	throttle_input = Input.get_axis("throttle_down", "throttle_up")
