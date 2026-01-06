@@ -94,6 +94,11 @@ The game world is a torus (loops around).
 
 Projectiles follow simple linear motion.
 
+- **Client rendering note**: projectiles are spawned client-side when first observed
+  in a server snapshot; snap to the first received position/rotation before enabling
+  interpolation, otherwise they may appear to spawn at `(0, 0)` and slide to the
+  shooter.
+
 ### Projectile State Variables
 
 - `position` (Vec2)

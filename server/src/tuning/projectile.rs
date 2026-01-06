@@ -15,8 +15,8 @@ pub struct ProjectileTuning {
 impl Default for ProjectileTuning {
     fn default() -> Self {
         Self {
-            speed: 400.0,
-            life_time: 1.25,
+            speed: 500.0,
+            life_time: 3.0,
             radius: 5.0,
         }
     }

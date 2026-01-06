@@ -11,6 +11,7 @@ height = 14.0
 script = ExtResource("1_k1cl8")
 
 [node name="Sprite" type="Sprite2D" parent="."]
+z_index = 3
 texture = ExtResource("2_y0kec")
 
 [node name="CollisionShape2D" type="CollisionShape2D" parent="."]

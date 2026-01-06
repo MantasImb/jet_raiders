@@ -1,4 +1,4 @@
-use crate::state::{EntityState, ServerState};
+use crate::state::{EntityState, ProjectileState, ServerState};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone)]
@@ -32,4 +32,6 @@ pub struct PlayerInput {
 pub struct WorldUpdate {
     pub tick: u64,
     pub entities: Vec<EntityState>,
+    #[serde(default)]
+    pub projectiles: Vec<ProjectileState>,
 }

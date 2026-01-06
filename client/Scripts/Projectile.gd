@@ -1,27 +1,42 @@
 extends Area2D
 class_name Projectile
 
-@export var speed : float = 500.0
-var owner_id : int
+# Authoritative state comes from the server; this node is just a visual.
+var projectile_id: int = 0
+var owner_id: int = 0
+
+# Interpolation
+var target_position: Vector2 = Vector2.ZERO
+var target_rotation: float = 0.0
+var smoothing_speed: float = 25.0
+var initialized: bool = false
 
 func _ready() -> void:
-	if not multiplayer.is_server():
-		set_physics_process(false)
-
-func _physics_process(delta: float) -> void:
-	position += -transform.y * speed * delta
-
-func _on_body_entered(body: Player) -> void:
-	if not multiplayer.is_server():
-		return
-	if not body.is_in_group("Player"):
-		return
-	if body.player_id == owner_id:
-		return
+	# Disable any legacy local simulation.
+	set_physics_process(false)
 	
-	body.take_damage(10, owner_id)
-	self.queue_free()
+	target_position = position
+	target_rotation = rotation
+
+func update_state(state: Dictionary) -> void:
+	# state has: id, owner_id, x, y, rot
+	target_position = Vector2(state.x, state.y)
+	target_rotation = state.rot
+	
+	# Snap on first update so we don't lerp from the default spawn position (0, 0).
+	if not initialized:
+		position = target_position
+		rotation = target_rotation
+		initialized = true
+
+func _process(delta: float) -> void:
+	position = position.lerp(target_position, smoothing_speed * delta)
+	rotation = lerp_angle(rotation, target_rotation, smoothing_speed * delta)
+
+func _on_body_entered(_body: Node) -> void:
+	# Collisions are handled server-side (future).
+	pass
 
 func _on_timer_timeout() -> void:
-	if multiplayer.is_server():
-		queue_free()
+	# Lifetime is controlled by the server snapshot.
+	pass

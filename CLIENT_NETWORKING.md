@@ -31,25 +31,19 @@ The server expects a JSON object containing all input states. Fields are optiona
 
 ```json
 {
-  "thrust": 1,
-  "turn": 0,
-  "shoot": true,
-  "special": false
+  "thrust": 1.0,
+  "turn": 0.0,
+  "shoot": true
 }
 ```
 
 **Field Definitions:**
 
-- `thrust` (i8): Throttle/Brake control
-  - `1` = Throttle (accelerate forward)
-  - `0` = Coast (no acceleration)
-  - `-1` = Brake (reverse/slow down)
-- `turn` (i8): Turning control
-  - `1` = Turn right
-  - `0` = Straight
-  - `-1` = Turn left
-- `shoot` (bool): Primary weapon (shoot)
-- `special` (bool): Special attack/ability
+- `thrust` (f32): Throttle input in `[-1.0, 1.0]` (Godot `Input.get_axis`).
+- `turn` (f32): Turn input in `[-1.0, 1.0]`.
+- `shoot` (bool): Fire (edge-triggered).
+  - Client should send `true` only on the press frame (`Input.is_action_just_pressed("shoot")`).
+  - Otherwise omit the field or send `false`.
 
 ### Transmission Strategy
 
@@ -98,6 +92,16 @@ Contains the snapshot of all entities.
 
         "rot": 1.57
       }
+    ],
+
+    "projectiles": [
+      {
+        "id": 1,
+        "owner_id": 1234567890,
+        "x": 110.0,
+        "y": 40.0,
+        "rot": 1.57
+      }
     ]
   }
 }
@@ -140,6 +144,11 @@ or
      movement yet for simplicity).
 
    - If `id` is new, spawn `player.tscn`.
+
+   - Iterate through `projectiles` (may be missing; treat as empty).
+     - If `id` is new, spawn `projectile.tscn`.
+     - Snap on the first update to avoid lerping from the default spawn position
+       (often `(0, 0)`), then lerp normally.
 
 4. **GameState**: Update UI (timers, screens).
 
