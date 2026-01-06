@@ -31,6 +31,7 @@ pub async fn world_task(
     let projectile_tuning = ProjectileTuning::default();
     let projectile_speed: f32 = projectile_tuning.speed;
     let projectile_ttl: f32 = projectile_tuning.life_time;
+    let projectile_radius: f32 = projectile_tuning.radius;
     let projectile_cooldown: f32 = 0.1;
 
     loop {
@@ -118,6 +119,32 @@ pub async fn world_task(
             p.y += p.vy * dt;
             p.ttl -= dt;
         }
+
+        // Projectile vs player collision (naive O(P*E) for now).
+        // We despawn the projectile on first hit and just log the result.
+        let hit_radius = player_radius + projectile_radius;
+        let hit_radius_sq = hit_radius * hit_radius;
+        for p in &mut projectiles {
+            // Mark for despawn.
+            if p.ttl <= 0.0 {
+                continue;
+            }
+
+            for e in &entities {
+                if e.id == p.owner_id {
+                    continue;
+                }
+
+                let dx = e.x - p.x;
+                let dy = e.y - p.y;
+                if (dx * dx + dy * dy) <= hit_radius_sq {
+                    println!("Hit: player {} was hit by player {} projectile", e.id, p.owner_id);
+                    p.ttl = 0.0;
+                    break;
+                }
+            }
+        }
+
         projectiles.retain(|p| p.ttl > 0.0);
 
         tick += 1;
