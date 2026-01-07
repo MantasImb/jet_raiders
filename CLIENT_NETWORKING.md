@@ -41,9 +41,9 @@ The server expects a JSON object containing all input states. Fields are optiona
 
 - `thrust` (f32): Throttle input in `[-1.0, 1.0]` (Godot `Input.get_axis`).
 - `turn` (f32): Turn input in `[-1.0, 1.0]`.
-- `shoot` (bool): Fire (edge-triggered).
-  - Client should send `true` only on the press frame (`Input.is_action_just_pressed("shoot")`).
-  - Otherwise omit the field or send `false`.
+- `shoot` (bool): Fire (hold-to-shoot).
+  - Client should send `true` while the button is held (`Input.is_action_pressed("shoot")`).
+  - The server fires whenever the per-player cooldown allows.
 
 ### Transmission Strategy
 

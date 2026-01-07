@@ -27,7 +27,7 @@ func _physics_process(delta: float) -> void:
 	# 1. Gather Input
 	throttle_input = Input.get_axis("throttle_down", "throttle_up")
 	turn_input = Input.get_axis("turn_left", "turn_right")
-	shoot_input = Input.is_action_just_pressed("shoot")
+	shoot_input = Input.is_action_pressed("shoot")
 	
 	# 2. Validate Network State
 	if not network_manager or not network_manager.connected:
