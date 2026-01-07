@@ -15,6 +15,12 @@ pub struct PlayerTuning {
 
     /// World-space collision radius in pixels (server-side hit checks).
     pub radius: f32,
+
+    /// Maximum health points.
+    pub max_hp: i32,
+
+    /// Respawn delay after death (seconds).
+    pub respawn_seconds: f32,
 }
 
 impl Default for PlayerTuning {
@@ -24,6 +30,8 @@ impl Default for PlayerTuning {
             turn_rate: 3.0,
             throttle_rate: 2.0,
             radius: 24.0,
+            max_hp: 100,
+            respawn_seconds: 1.0,
         }
     }
 }

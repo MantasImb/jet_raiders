@@ -23,6 +23,7 @@ pub struct EntityState {
     pub x: f32,
     pub y: f32,
     pub rot: f32,
+    pub hp: i32,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -39,6 +40,11 @@ pub struct SimEntity {
     pub x: f32,
     pub y: f32,
     pub rot: f32,
+
+    // Combat state.
+    pub hp: i32,
+    pub alive: bool,
+    pub respawn_timer: f32,
 
     // Movement-only state (do not serialize to clients)
     pub throttle: f32,           // 0.0..=1.0
@@ -64,6 +70,7 @@ impl From<&SimEntity> for EntityState {
             x: e.x,
             y: e.y,
             rot: e.rot,
+            hp: e.hp,
         }
     }
 }

@@ -8,8 +8,7 @@ simulation.
 - Collisions are computed **server-side only** (Rust).
 - Clients are “dumb terminals”: they render snapshots and do not perform
   authoritative hit detection.
-- Current collision handling only logs hits and despawns the projectile (no health
-  system yet).
+- Current collision handling applies damage on hit and despawns the projectile.
 
 ## Collision shapes
 
@@ -96,7 +95,12 @@ for p in &mut projectiles {
         let dx = e.x - p.x;
         let dy = e.y - p.y;
         if (dx * dx + dy * dy) <= hit_radius_sq {
-            println!("Hit: player {} was hit by player {} projectile", e.id, p.owner_id);
+            e.hp -= projectile_damage;
+            if e.hp <= 0 {
+                e.hp = 0;
+                e.alive = false;
+                e.respawn_timer = respawn_delay;
+            }
             p.ttl = 0.0;
             break;
         }
@@ -128,6 +132,6 @@ pub struct ProjectileTuning {
 
 ## Notes / next steps
 
-- We currently despawn projectiles on hit; later we can add a `GameEvent` (or a
-  dedicated combat system) to apply damage and broadcast hit events.
+- We currently despawn projectiles on hit and apply damage server-side.
+- When a player's HP reaches 0, their plane despawns and respawns after 1 second.
 - We do not yet handle projectile-projectile collisions or world collisions.

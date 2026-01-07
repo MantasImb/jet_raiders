@@ -10,6 +10,9 @@ pub struct ProjectileTuning {
 
     /// World-space collision radius in pixels.
     pub radius: f32,
+
+    /// Base damage dealt on hit.
+    pub damage: i32,
 }
 
 impl Default for ProjectileTuning {
@@ -18,6 +21,7 @@ impl Default for ProjectileTuning {
             speed: 500.0,
             life_time: 3.0,
             radius: 5.0,
+            damage: 30,
         }
     }
 }

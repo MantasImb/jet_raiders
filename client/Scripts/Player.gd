@@ -61,6 +61,8 @@ func _ready() -> void:
 func update_state(state: Dictionary) -> void:
 	target_position = Vector2(state.x, state.y)
 	target_rotation = state.rot
+	if state.has("hp"):
+		current_hp = int(state.hp)
 	
 	# If this is our local player and game manager doesn't know it yet, register it
 	if network_manager and player_id == network_manager.local_player_id:

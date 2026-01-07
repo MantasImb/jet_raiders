@@ -33,7 +33,13 @@ pub async fn world_task(
     let projectile_speed: f32 = projectile_tuning.speed;
     let projectile_ttl: f32 = projectile_tuning.life_time;
     let projectile_radius: f32 = projectile_tuning.radius;
+    let projectile_damage: i32 = projectile_tuning.damage;
     let projectile_cooldown: f32 = 0.1;
+
+    let player_tuning = PlayerTuning::default();
+    let player_radius: f32 = player_tuning.radius;
+    let player_max_hp: i32 = player_tuning.max_hp;
+    let respawn_delay: f32 = player_tuning.respawn_seconds;
 
     loop {
         interval.tick().await;
@@ -53,6 +59,9 @@ pub async fn world_task(
                         x,
                         y,
                         rot: 0.0,
+                        hp: player_max_hp,
+                        alive: true,
+                        respawn_timer: 0.0,
                         throttle: 0.0,
                         last_input: PlayerInput {
                             thrust: 0.0,
@@ -76,19 +85,41 @@ pub async fn world_task(
         }
 
         let dt = config::TICK_INTERVAL.as_secs_f32();
-        let tuning = PlayerTuning::default();
         let cfg = movement::MovementConfig {
-            max_speed: tuning.max_speed,
-            turn_rate: tuning.turn_rate,
-            throttle_rate: tuning.throttle_rate,
+            max_speed: player_tuning.max_speed,
+            turn_rate: player_tuning.turn_rate,
+            throttle_rate: player_tuning.throttle_rate,
             min_x,
             max_x,
             min_y,
             max_y,
         };
-        let player_radius = tuning.radius;
 
         for e in &mut entities {
+            if !e.alive {
+                e.respawn_timer -= dt;
+                if e.respawn_timer <= 0.0 {
+                    let now = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_micros();
+                    e.x = ((now % 800) as f32) - 400.0;
+                    e.y = ((now % 460) as f32) - 230.0;
+                    e.rot = 0.0;
+                    e.hp = player_max_hp;
+                    e.alive = true;
+                    e.respawn_timer = 0.0;
+                    e.throttle = 0.0;
+                    e.shoot_cooldown = 0.0;
+                    e.last_input = PlayerInput {
+                        thrust: 0.0,
+                        turn: 0.0,
+                        shoot: false,
+                    };
+                }
+                continue;
+            }
+
             // Ship movement.
             movement::tick_entity(e, dt, cfg);
 
@@ -131,7 +162,10 @@ pub async fn world_task(
                 continue;
             }
 
-            for e in &entities {
+            for e in entities.iter_mut() {
+                if !e.alive {
+                    continue;
+                }
                 if e.id == p.owner_id {
                     continue;
                 }
@@ -139,7 +173,22 @@ pub async fn world_task(
                 let dx = e.x - p.x;
                 let dy = e.y - p.y;
                 if (dx * dx + dy * dy) <= hit_radius_sq {
-                    info!(victim_id = e.id, shooter_id = p.owner_id, projectile_id = p.id, "player hit");
+                    e.hp -= projectile_damage;
+                    if e.hp <= 0 {
+                        e.hp = 0;
+                        e.alive = false;
+                        e.respawn_timer = respawn_delay;
+                        e.throttle = 0.0;
+                        e.shoot_cooldown = 0.0;
+                    }
+
+                    info!(
+                        victim_id = e.id,
+                        shooter_id = p.owner_id,
+                        projectile_id = p.id,
+                        victim_hp = e.hp,
+                        "player hit"
+                    );
                     p.ttl = 0.0;
                     break;
                 }
@@ -149,9 +198,15 @@ pub async fn world_task(
         projectiles.retain(|p| p.ttl > 0.0);
 
         tick += 1;
-        let entities_snapshot: Vec<EntityState> = entities.iter().map(EntityState::from).collect();
-        let projectiles_snapshot: Vec<crate::state::ProjectileState> =
-            projectiles.iter().map(crate::state::ProjectileState::from).collect();
+        let entities_snapshot: Vec<EntityState> = entities
+            .iter()
+            .filter(|e| e.alive)
+            .map(EntityState::from)
+            .collect();
+        let projectiles_snapshot: Vec<crate::state::ProjectileState> = projectiles
+            .iter()
+            .map(crate::state::ProjectileState::from)
+            .collect();
 
         let _ = world_tx.send(WorldUpdate {
             tick,
