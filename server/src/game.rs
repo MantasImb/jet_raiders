@@ -6,6 +6,7 @@ use crate::tuning::player::PlayerTuning;
 use crate::tuning::projectile::ProjectileTuning;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::{broadcast, mpsc, watch};
+use tracing::info;
 
 pub async fn world_task(
     mut input_rx: mpsc::Receiver<GameEvent>,
@@ -40,7 +41,7 @@ pub async fn world_task(
         while let Ok(ev) = input_rx.try_recv() {
             match ev {
                 GameEvent::Join { player_id } => {
-                    println!("Logic: Player {} joined", player_id);
+                    info!(player_id, "player joined");
                     let now = SystemTime::now()
                         .duration_since(UNIX_EPOCH)
                         .unwrap()
@@ -62,7 +63,7 @@ pub async fn world_task(
                     });
                 }
                 GameEvent::Leave { player_id } => {
-                    println!("Logic: Player {} left", player_id);
+                    info!(player_id, "player left");
                     entities.retain(|e| e.id != player_id);
                     projectiles.retain(|p| p.owner_id != player_id);
                 }
@@ -138,7 +139,7 @@ pub async fn world_task(
                 let dx = e.x - p.x;
                 let dy = e.y - p.y;
                 if (dx * dx + dy * dy) <= hit_radius_sq {
-                    println!("Hit: player {} was hit by player {} projectile", e.id, p.owner_id);
+                    info!(victim_id = e.id, shooter_id = p.owner_id, projectile_id = p.id, "player hit");
                     p.ttl = 0.0;
                     break;
                 }

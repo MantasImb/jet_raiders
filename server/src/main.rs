@@ -17,8 +17,35 @@ use axum::{Router, routing::get};
 use std::{net::SocketAddr, sync::Arc};
 use tokio::sync::{broadcast, mpsc, watch};
 
+fn init_tracing() {
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+
+    let json = matches!(std::env::var("LOG_FORMAT").as_deref(), Ok("json"));
+    if json {
+        tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_target(false)
+            .json()
+            .with_current_span(true)
+            .init();
+    } else {
+        tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_target(false)
+            .compact()
+            .init();
+    }
+
+    std::panic::set_hook(Box::new(|info| {
+        let backtrace = std::backtrace::Backtrace::capture();
+        tracing::error!(%info, ?backtrace, "panic");
+    }));
+}
+
 #[tokio::main]
 async fn main() {
+    init_tracing();
     // Setup Channels
     // input_tx/rx: All client inputs go to the single World Task.
     let (input_tx, input_rx) = mpsc::channel::<GameEvent>(config::INPUT_CHANNEL_CAPACITY);
@@ -49,19 +76,19 @@ async fn main() {
         .with_state(state);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
-    println!("listening on {addr}");
+    tracing::info!(%addr, "listening");
 
     // Bind TCP listener with error handling
     let listener = match tokio::net::TcpListener::bind(addr).await {
         Ok(l) => l,
         Err(e) => {
-            eprintln!("failed to bind {}: {}", addr, e);
+            tracing::error!(%addr, error = %e, "failed to bind");
             return; // Abort startup on bind failure
         }
     };
 
     // Serve app and report errors rather than panicking
     if let Err(e) = axum::serve(listener, app).await {
-        eprintln!("server error: {}", e);
+        tracing::error!(error = %e, "server error");
     }
 }

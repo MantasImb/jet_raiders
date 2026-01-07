@@ -14,6 +14,7 @@ use futures::SinkExt;
 use std::sync::Arc;
 use tokio::sync::watch::Receiver;
 use tokio::sync::{broadcast, mpsc, watch};
+use tracing::{debug, error, info, info_span, warn};
 
 #[allow(dead_code)]
 #[derive(Debug)]
@@ -45,19 +46,27 @@ pub async fn ws_handler(
 }
 
 async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
+    // Separate connection id for correlating logs before/after a player_id exists.
+    let conn_id = rand_id();
+    let span = info_span!("conn", conn_id, player_id = tracing::field::Empty);
+    let _enter = span.enter();
+
     let mut ctx = match bootstrap_connection(&mut socket, &state).await {
         Ok(ctx) => ctx,
         Err(e) => {
-            // TODO: Use tracing with structured fields (e.g. conn_id, player_id if assigned).
             // TODO: Consider sending a close frame / error message to the client before returning.
-            eprintln!("Failed to bootstrap connection");
-            eprintln!("{:?}", e);
+            error!(error = ?e, "failed to bootstrap connection");
             return;
         }
     };
 
+    span.record("player_id", ctx.player_id);
+    info!("client connected");
+
     // Main Client Loop
-    let _err = run_client_loop(&mut socket, &mut ctx).await;
+    if let Err(e) = run_client_loop(&mut socket, &mut ctx).await {
+        warn!(error = ?e, "client loop exited with error");
+    }
 }
 
 async fn send_message(socket: &mut WebSocket, msg: &ServerMessage) -> Result<(), NetError> {
@@ -169,7 +178,7 @@ async fn run_client_loop(socket: &mut WebSocket, ctx: &mut ConnCtx) -> Result<()
                     Err(broadcast::error::RecvError::Lagged(n)) => {
                         // TODO: Implement resync (e.g. send latest snapshot) instead of silently continuing.
                         // TODO: Rate-limit this log (can spam under load); switch to tracing metrics.
-                        eprintln!("World_rx lagged. Missed {n} updates");
+                        warn!(missed = n, "world updates lagged");
                         false
                     }
                     Err(broadcast::error::RecvError::Closed) => {
@@ -191,7 +200,7 @@ async fn run_client_loop(socket: &mut WebSocket, ctx: &mut ConnCtx) -> Result<()
                     Err(e) => {
                         // TODO: `changed()` only errors when the sender is dropped; don't treat it as a generic error.
                         // TODO: Use tracing and include context about why we're shutting down the connection.
-                        eprintln!("Server state closed: {:?}", e);
+                        error!(error = ?e, "server state closed");
                         fatal = Some(NetError::ServerStateClosed);
                         true
                     }, //watch sender dropped
@@ -200,13 +209,13 @@ async fn run_client_loop(socket: &mut WebSocket, ctx: &mut ConnCtx) -> Result<()
             };
         if disconnect {
             if let Err(err) = socket.close().await.map_err(NetError::Ws) {
-                eprintln!("{:?}", err);
+                debug!(error = ?err, "socket close error");
             }
             break;
         }
     }
     if let Err(e) = disconnect_cleanup(ctx).await {
-        eprintln!("Error cleaning up:{:?}", e);
+        warn!(error = ?e, "error during disconnect cleanup");
         if fatal.is_none() {
             fatal = Some(e);
         }
@@ -236,9 +245,8 @@ fn handle_incoming_ws(
                             // Forward input to World Task via Channel
                             match input_tx.try_send(GameEvent::Input { player_id, input }) {
                                 Ok(()) => {}
-                                Err(tokio::sync::mpsc::error::TrySendError::Full(evt)) => {
-                                    println!("Could not send input_tx, mpsc full:");
-                                    println!("{:?}", evt);
+                                Err(tokio::sync::mpsc::error::TrySendError::Full(_evt)) => {
+                                    warn!(player_id, "input channel full; dropping input");
                                     // TODO: Needs upgraded implementation with sampling. (When tracing
                                     // is added)
                                     // TODO: The input is dropped on Full. Decide policy:
@@ -254,10 +262,7 @@ fn handle_incoming_ws(
                         Err(e) => {
                             // TODO: Consider sending an error response (or closing) on malformed input.
                             // TODO: Avoid logging full payloads at high volume; use truncation/sampling.
-                            eprintln!(
-                                "Failed to parse input from player {}: {} (err: {})",
-                                player_id, text, e
-                            );
+                            warn!(player_id, bytes = text.len(), error = %e, "failed to parse player input");
                             Ok(LoopControl::Continue)
                         }
                     }
@@ -267,18 +272,17 @@ fn handle_incoming_ws(
                 other => {
                     // TODO: Explicitly handle Ping/Pong to keep connections healthy behind proxies.
                     // TODO: Decide if Binary is supported; otherwise close with a clear reason.
-                    println!("Other non-text message from {}:", player_id);
-                    println!("{:?}", other);
+                    debug!(player_id, ?other, "non-text websocket message");
                     Ok(LoopControl::Continue)
                 }
             }
         }
         Some(Err(e)) => {
-            eprintln!("websocket recv error for {}: {}", player_id, e);
+            warn!(player_id, error = %e, "websocket recv error");
             Ok(LoopControl::Disconnect)
         }
         None => {
-            eprintln!("websocket closed for {}", player_id);
+            info!(player_id, "websocket closed");
             Ok(LoopControl::Disconnect)
         }
     }
@@ -312,7 +316,6 @@ async fn disconnect_cleanup(ctx: &mut ConnCtx) -> Result<(), NetError> {
         .send(GameEvent::Leave { player_id })
         .await
         .map_err(|_| NetError::InputClosed)?;
-    // TODO: Switch to tracing and include connection context (conn_id, session, lobby_id).
-    println!("client {player_id} disconnected");
+    info!(player_id, "client disconnected");
     Ok(())
 }
