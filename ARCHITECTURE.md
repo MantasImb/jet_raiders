@@ -60,8 +60,8 @@ server/
     ├── state.rs        # Data definitions: GameState, Player, Projectile.
     └── systems/        # Logic Modules.
         ├── mod.rs
-        ├── movement.rs
-        └── combat.rs
+        ├── ship_movement.rs
+        └── projectiles.rs
 ```
 
 ## 3. Communication Protocol (`protocol.rs`)
@@ -156,9 +156,9 @@ The server runs at a fixed tick rate (e.g., 60 ticks per second).
 1. **Sleep**: Wait until the next tick time (ensures consistent speed).
 2. **Process Inputs**: Drain the `InputQueue`. Update `Player.input` for each client.
 3. **Run Systems**:
-   - `movement::update(&mut state)`: Apply thrust, update positions, wrap
+   - `ship_movement::update(&mut state)`: Apply thrust, update positions, wrap
      around map borders.
-   - `combat::update(&mut state)`: Move projectiles, check collisions (AABB or
+   - `projectiles::update(&mut state)`: Move projectiles, check collisions (AABB or
      Circle), apply damage, handle respawns.
 4. **Broadcast State**: Serialize `GameState` into a `WorldSnapshot` and
    send it to all connected clients via `net.rs`.
@@ -188,7 +188,7 @@ The Godot client needs to change from "Processing Logic" to "Displaying State".
 
 ## 7. Future Extensibility
 
-- **New Weapons**: Add a `weapon_type` enum to `Player` and switch logic in `combat.rs`.
+- **New Weapons**: Add a `weapon_type` enum to `Player` and switch logic in `projectiles.rs`.
 - **Power-ups**: Add a `Vec<PowerUp>` to `GameState` and a `powerup.rs` system.
 - **Binary Protocol**: Switch `serde_json` to `bincode` in `net.rs` for smaller
   packets (better performance) without changing game logic.

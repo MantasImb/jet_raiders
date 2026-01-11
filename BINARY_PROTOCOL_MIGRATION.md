@@ -91,7 +91,8 @@ Guidelines:
 - Keep endian fixed (little-endian).
 - Use `u8` for booleans (`0` or `1`).
 - Use counted arrays with a fixed-width count (`u16` unless you expect more
-  than 65k items).
+  than 65k items). This migration uses `u32` for projectiles because spikes in
+  projectile counts are more likely than entity spikes.
 - Add golden test vectors (hex payloads) so both sides can assert that they
   decode the same bytes.
 
@@ -112,7 +113,7 @@ Envelope (all little-endian):
 
 - `u64` tick
 - `u16` entity_count
-- `u16` projectile_count
+- `u32` projectile_count
 - `EntityState[entity_count]`
 - `ProjectileState[projectile_count]`
 
@@ -132,7 +133,7 @@ Envelope (all little-endian):
 - `f32` y
 - `f32` rot
 
-If we ever exceed `u16` counts, switch both sides to `u32` and bump the
+If we ever exceed `u16` entity counts, switch both sides to `u32` and bump the
 envelope version.
 
 ## 5. Client Changes

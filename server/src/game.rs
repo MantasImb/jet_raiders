@@ -1,7 +1,7 @@
 use crate::config;
 use crate::protocol::{GameEvent, PlayerInput, WorldUpdate};
 use crate::state::{EntityState, ServerState, SimEntity};
-use crate::systems::movement;
+use crate::systems::{projectiles, ship_movement};
 use crate::tuning::player::PlayerTuning;
 use crate::tuning::projectile::ProjectileTuning;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -85,7 +85,7 @@ pub async fn world_task(
         }
 
         let dt = config::TICK_INTERVAL.as_secs_f32();
-        let cfg = movement::MovementConfig {
+        let cfg = ship_movement::MovementConfig {
             max_speed: player_tuning.max_speed,
             turn_rate: player_tuning.turn_rate,
             throttle_rate: player_tuning.throttle_rate,
@@ -121,81 +121,25 @@ pub async fn world_task(
             }
 
             // Ship movement.
-            movement::tick_entity(e, dt, cfg);
-
-            // Shooting.
-            e.shoot_cooldown = (e.shoot_cooldown - dt).max(0.0);
-            if e.last_input.shoot && e.shoot_cooldown <= 0.0 {
-                // Forward vector (same convention as movement).
-                let dir_x = e.rot.sin();
-                let dir_y = -e.rot.cos();
-
-                projectiles.push(crate::state::SimProjectile {
-                    id: next_projectile_id,
-                    owner_id: e.id,
-                    // Spawn at the edge of the ship's radius, in the direction it's facing.
-                    x: e.x + dir_x * player_radius,
-                    y: e.y + dir_y * player_radius,
-                    rot: e.rot,
-                    vx: dir_x * projectile_speed,
-                    vy: dir_y * projectile_speed,
-                    ttl: projectile_ttl,
-                });
-                next_projectile_id = next_projectile_id.wrapping_add(1);
-                e.shoot_cooldown = projectile_cooldown;
-            }
+            ship_movement::tick_entity(e, dt, cfg);
         }
 
-        for p in &mut projectiles {
-            p.x += p.vx * dt;
-            p.y += p.vy * dt;
-            p.ttl -= dt;
-        }
-
-        // Projectile vs player collision (naive O(P*E) for now).
-        // We despawn the projectile on first hit and just log the result.
-        let hit_radius = player_radius + projectile_radius;
-        let hit_radius_sq = hit_radius * hit_radius;
-        for p in &mut projectiles {
-            // Mark for despawn.
-            if p.ttl <= 0.0 {
-                continue;
-            }
-
-            for e in entities.iter_mut() {
-                if !e.alive {
-                    continue;
-                }
-                if e.id == p.owner_id {
-                    continue;
-                }
-
-                let dx = e.x - p.x;
-                let dy = e.y - p.y;
-                if (dx * dx + dy * dy) <= hit_radius_sq {
-                    e.hp -= projectile_damage;
-                    if e.hp <= 0 {
-                        e.hp = 0;
-                        e.alive = false;
-                        e.respawn_timer = respawn_delay;
-                        e.throttle = 0.0;
-                        e.shoot_cooldown = 0.0;
-                    }
-
-                    info!(
-                        victim_id = e.id,
-                        shooter_id = p.owner_id,
-                        projectile_id = p.id,
-                        victim_hp = e.hp,
-                        "player hit"
-                    );
-                    p.ttl = 0.0;
-                    break;
-                }
-            }
-        }
-
-        projectiles.retain(|p| p.ttl > 0.0);
+        // Projectile simulation and collision resolution.
+        projectiles::tick_projectiles(
+            &mut entities,
+            &mut projectiles,
+            &mut next_projectile_id,
+            dt,
+            projectiles::ProjectileConfig {
+                speed: projectile_speed,
+                ttl: projectile_ttl,
+                radius: projectile_radius,
+                damage: projectile_damage,
+                cooldown: projectile_cooldown,
+                player_radius,
+                respawn_delay,
+            },
+        );
 
         tick += 1;
         let entities_snapshot: Vec<EntityState> = entities

@@ -96,7 +96,7 @@ pub struct PlayerInputState {
 Key point: don’t reuse `protocol::PlayerInput` inside `state.rs`; convert at the
 boundary (usually in `net.rs`).
 
-### `systems/movement.rs` (pure-ish updates)
+### `systems/ship_movement.rs` (pure-ish updates)
 
 ```rust
 use crate::state::GameState;
@@ -144,8 +144,8 @@ pub async fn run_game_loop(
         }
 
         let dt = tick.as_secs_f32();
-        crate::systems::movement::update(&mut state, dt);
-        crate::systems::combat::update(&mut state, dt);
+        crate::systems::ship_movement::update(&mut state, dt);
+        crate::systems::projectiles::update(&mut state, dt);
 
         let msg = protocol::ServerMessage::WorldSnapshot(to_snapshot(&state));
         if tx_out.send(msg).await.is_err() {
@@ -217,7 +217,7 @@ You’re separated correctly when:
 
 - `main.rs` has no `GameState` mutations.
 - `main.rs` has no JSON encode/decode logic.
-- `net.rs` has no calls to `movement::update` or `combat::update`.
+- `net.rs` has no calls to `ship_movement::update` or `projectiles::update`.
 - `systems/*` do not import `axum`, `tokio::net`, or `serde_json`.
 - `state.rs` does not import `axum` or `serde`.
 - `protocol.rs` does not import `GameState`.

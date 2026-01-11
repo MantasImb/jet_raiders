@@ -86,7 +86,7 @@ Owns:
 Must not own:
 
 - Tick loop.
-- Movement/combat/collision logic.
+- Ship movement/projectile/collision logic.
 - Authoritative `GameState`.
 
 ### `lobby.rs` (application orchestration)
@@ -135,7 +135,7 @@ Must not own:
 
 Owns:
 
-- Update functions that mutate `GameState` (movement, combat, etc.).
+- Update functions that mutate `GameState` (ship movement, projectiles, etc.).
 
 Must not own:
 

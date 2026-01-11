@@ -41,7 +41,7 @@ A quick check:
 - `net.rs`
   - Owns: Axum router, WS upgrade, per-connection read/write loops, converting
     wire messages to typed domain inputs.
-  - Does not own: movement/combat/collision, tick loop, authoritative state.
+  - Does not own: ship movement/projectiles/collision, tick loop, authoritative state.
 
 - `game.rs`
   - Owns: the tick loop; drains typed inputs; calls systems; emits
@@ -106,8 +106,8 @@ Rule: `state.rs` should not import Axum or serde.
 
 Move world update logic into focused functions:
 
-- `systems::movement::update(state, dt)`
-- `systems::combat::update(state, dt)`
+- `systems::ship_movement::update(state, dt)`
+- `systems::projectiles::update(state, dt)`
 
 Rule: systems should only depend on domain types.
 
@@ -165,7 +165,7 @@ Avoid:
 You’re separated correctly when:
 
 - `main.rs` contains no world updates and no serde/JSON work.
-- `net.rs` contains no calls into movement/combat systems.
+- `net.rs` contains no calls into ship movement/projectile systems.
 - `state.rs` and `systems/*` import no Axum/WebSocket/serde.
 - `protocol.rs` imports no `GameState`.
 

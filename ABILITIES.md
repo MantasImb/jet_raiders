@@ -85,12 +85,12 @@ pub struct Player {
 
 ## 3. Implementation Logic
 
-Logic for abilities will be handled in separate systems to keep `combat.rs`
+Logic for abilities will be handled in separate systems to keep `projectiles.rs`
 clean.
 
 ### New System: `abilities.rs`
 
-This system runs _before_ movement and combat.
+This system runs _before_ ship movement and projectiles.
 
 1. **Check Input**: Did the player press the Ability Key?
 2. **Check Cooldown**: Is `secondary_cooldown.is_ready()`?
@@ -102,7 +102,7 @@ This system runs _before_ movement and combat.
     - If `current_time > secondary_active_until`, disable effects (set flags
       to false).
 
-### Updates to `combat.rs`
+### Updates to `projectiles.rs`
 
 - **Shooting**: Switch on `weapon_type` to decide what projectile to spawn
   (fast & weak, or slow & strong).
@@ -175,7 +175,7 @@ When a player chooses an upgrade, we simply modify these values.
 
 ### Calculation in Systems
 
-Systems (`combat.rs`, `movement.rs`) will use these modifiers to calculate
+Systems (`projectiles.rs`, `ship_movement.rs`) will use these modifiers to calculate
 effective values on the fly.
 
 ```rust
