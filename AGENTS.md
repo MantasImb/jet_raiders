@@ -1,4 +1,4 @@
-# Agent Configuration Specification
+ Agent Configuration Specification
 
 Look for .md files within the main directory of the project for documentation regarding the project structure/architecture.
 

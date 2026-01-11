@@ -6,30 +6,26 @@ use axum::{
     Error,
     extract::{
         State,
-        ws::{Message, WebSocket, WebSocketUpgrade},
+        ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade, close_code},
     },
     response::IntoResponse,
 };
 use futures::SinkExt;
-use std::sync::Arc;
+use std::{sync::Arc, time::{Duration, Instant}};
 use tokio::sync::watch::Receiver;
 use tokio::sync::{broadcast, mpsc, watch};
 use tracing::{debug, error, info, info_span, warn};
 
-#[allow(dead_code)]
 #[derive(Debug)]
 enum NetError {
-    // TODO: Either remove this enum (if we keep handling errors ad-hoc) or use it consistently
-    // TODO: throughout the connection lifecycle so callers can react based on category.
-    // Future plans to make separate Ws errors for bootstrap and loop errors
-    // This is currently not used by the handler loop
+    // Categorizes connection lifecycle failures so callers can decide policy.
+    #[allow(dead_code)]
     Ws(axum::Error),
+    #[allow(dead_code)]
     Serialization(serde_json::Error),
     InputClosed,
     WorldUpdatesClosed,
     ServerStateClosed,
-    // For future lag handling: when this happens, send latest GameState snapshot for resync
-    // WorldUpdatesLagged(u64)
 }
 
 impl From<axum::Error> for NetError {
@@ -54,8 +50,14 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
     let mut ctx = match bootstrap_connection(&mut socket, &state).await {
         Ok(ctx) => ctx,
         Err(e) => {
-            // TODO: Consider sending a close frame / error message to the client before returning.
             error!(error = ?e, "failed to bootstrap connection");
+            let _ = socket
+                .send(Message::Close(Some(CloseFrame {
+                    code: close_code::POLICY,
+                    reason: "bootstrap failed".into(),
+                })))
+                .await;
+            let _ = socket.close().await;
             return;
         }
     };
@@ -69,14 +71,16 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
     }
 }
 
-async fn send_message(socket: &mut WebSocket, msg: &ServerMessage) -> Result<(), NetError> {
+async fn send_message(socket: &mut WebSocket, msg: &ServerMessage) -> Result<usize, NetError> {
     // Serialize message safely; log JSON errors instead of panicking
     // TODO: Consider reducing per-message allocations (e.g. reuse buffers) if this becomes hot.
     let txt = serde_json::to_string(msg).map_err(NetError::Serialization)?;
+    let bytes = txt.len();
     socket
         .send(Message::Text(txt.into()))
         .await
-        .map_err(NetError::Ws)
+        .map_err(NetError::Ws)?;
+    Ok(bytes)
 }
 
 struct ConnCtx {
@@ -84,6 +88,19 @@ struct ConnCtx {
     pub input_tx: mpsc::Sender<GameEvent>,
     pub world_rx: broadcast::Receiver<WorldUpdate>,
     pub server_state_rx: watch::Receiver<ServerState>,
+
+    pub msgs_in: u64,
+    pub msgs_out: u64,
+    pub bytes_in: u64,
+    pub bytes_out: u64,
+
+    pub invalid_json: u32,
+
+    pub last_input_full_log: Instant,
+    pub last_world_lag_log: Instant,
+    pub last_invalid_input_log: Instant,
+
+    pub close_frame: Option<CloseFrame>,
 }
 
 async fn bootstrap_connection(
@@ -95,15 +112,14 @@ async fn bootstrap_connection(
     let server_state_rx = state.server_state_tx.subscribe();
 
     // Handshake & ID Assignment
-    // Generate a unique ID for this connection.
-    // TODO: Ensure IDs are collision-free (or have the world task reject/rehash on collision).
+    // `rand_id()` is process-unique and monotonic, so IDs won't collide within a running server.
     // TODO: If/when auth exists, bind player identity to auth/session instead of random IDs.
     let player_id = rand_id();
 
     // Send Identity Packet
     // Tell the client "This is who you are".
     let identity_msg = ServerMessage::Identity { player_id };
-    send_message(socket, &identity_msg).await?;
+    let _ = send_message(socket, &identity_msg).await?;
 
     // Notify World Task
     // Tell the game loop to spawn a ship for this ID.
@@ -129,11 +145,25 @@ async fn bootstrap_connection(
         return Err(e);
     }
 
+    let now = Instant::now() - LOG_THROTTLE;
     Ok(ConnCtx {
         player_id,
         world_rx,
         server_state_rx,
         input_tx: state.input_tx.clone(),
+
+        msgs_in: 0,
+        msgs_out: 0,
+        bytes_in: 0,
+        bytes_out: 0,
+
+        invalid_json: 0,
+
+        last_input_full_log: now,
+        last_world_lag_log: now,
+        last_invalid_input_log: now,
+
+        close_frame: None,
     })
 }
 
@@ -142,79 +172,135 @@ enum LoopControl {
     Disconnect,
 }
 
+const LOG_THROTTLE: Duration = Duration::from_secs(2);
+const MAX_INVALID_JSON: u32 = 10;
+
+fn should_log(last: &mut Instant) -> bool {
+    if last.elapsed() >= LOG_THROTTLE {
+        *last = Instant::now();
+        true
+    } else {
+        false
+    }
+}
+
+fn sanitize_input(mut input: PlayerInput) -> Option<PlayerInput> {
+    if !input.thrust.is_finite() || !input.turn.is_finite() {
+        return None;
+    }
+
+    input.thrust = input.thrust.clamp(-1.0, 1.0);
+    input.turn = input.turn.clamp(-1.0, 1.0);
+
+    Some(input)
+}
+
 async fn run_client_loop(socket: &mut WebSocket, ctx: &mut ConnCtx) -> Result<(), NetError> {
     let player_id = ctx.player_id;
-    let input_tx = &ctx.input_tx;
-    let world_rx = &mut ctx.world_rx;
-    let server_state_rx = &mut ctx.server_state_rx;
+
+    // Split borrows so `tokio::select!` can hold them concurrently.
+    let ConnCtx {
+        input_tx,
+        world_rx,
+        server_state_rx,
+        msgs_in,
+        msgs_out,
+        bytes_in,
+        bytes_out,
+        invalid_json,
+        last_input_full_log,
+        last_world_lag_log,
+        last_invalid_input_log,
+        close_frame,
+        ..
+    } = ctx;
 
     let mut fatal: Option<NetError> = None;
 
     loop {
-        // TODO: Add tracing spans per-connection and per-message counters (and sample logs).
         // disconnect becomes true on error
         let disconnect: bool = tokio::select! {
-        // Incoming Message from Client
-        incoming = socket.recv() => {
-            match handle_incoming_ws(incoming, player_id, input_tx) {
-                Ok(LoopControl::Continue) => false,
-                Ok(LoopControl::Disconnect) => true,
-                Err(e) => {
-                    fatal = Some(e);
-                    true
+            // Incoming Message from Client
+            incoming = socket.recv() => {
+                match handle_incoming_ws(
+                    socket,
+                    incoming,
+                    player_id,
+                    input_tx,
+                    msgs_in,
+                    bytes_in,
+                    invalid_json,
+                    last_input_full_log,
+                    last_invalid_input_log,
+                    close_frame,
+                ).await {
+                    Ok(LoopControl::Continue) => false,
+                    Ok(LoopControl::Disconnect) => true,
+                    Err(e) => {
+                        fatal = Some(e);
+                        true
+                    }
                 }
             }
-        }
 
-        // Outgoing World Update
+            // Outgoing World Update
             world_msg = world_rx.recv() => {
                 match world_msg {
-                    Ok(update) => {
-                        match forward_world_update(update, socket).await {
-                            LoopControl::Continue => false,
-                            LoopControl::Disconnect => true
-                        }
-                    }
+                    Ok(update) => match forward_world_update(update, socket, msgs_out, bytes_out).await {
+                        LoopControl::Continue => false,
+                        LoopControl::Disconnect => true,
+                    },
                     Err(broadcast::error::RecvError::Lagged(n)) => {
-                        // TODO: Implement resync (e.g. send latest snapshot) instead of silently continuing.
-                        // TODO: Rate-limit this log (can spam under load); switch to tracing metrics.
-                        warn!(missed = n, "world updates lagged");
-                        false
+                        if should_log(last_world_lag_log) {
+                            warn!(missed = n, "world updates lagged; sending snapshot");
+                        }
+
+                        // Resync strategy: send the latest GameState snapshot.
+                        let st = server_state_rx.borrow().clone();
+                        match send_message(socket, &ServerMessage::GameState(st)).await {
+                            Ok(bytes) => {
+                                *msgs_out += 1;
+                                *bytes_out += bytes as u64;
+                                false
+                            }
+                            Err(_) => true,
+                        }
                     }
                     Err(broadcast::error::RecvError::Closed) => {
                         fatal = Some(NetError::WorldUpdatesClosed);
                         true
-                    },
-                }
-        }
-
-        // Outgoing Server State
-        changed_state = server_state_rx.changed() => {
-            match changed_state {
-                Ok(()) => {
-                    match forward_server_state(server_state_rx, socket).await {
-                            LoopControl::Continue => false,
-                            LoopControl::Disconnect => true
-                        }
                     }
-                    Err(e) => {
-                        // TODO: `changed()` only errors when the sender is dropped; don't treat it as a generic error.
-                        // TODO: Use tracing and include context about why we're shutting down the connection.
-                        error!(error = ?e, "server state closed");
+                }
+            }
+
+            // Outgoing Server State
+            changed_state = server_state_rx.changed() => {
+                match changed_state {
+                    Ok(()) => match forward_server_state(server_state_rx, socket, msgs_out, bytes_out).await {
+                        LoopControl::Continue => false,
+                        LoopControl::Disconnect => true,
+                    },
+                    Err(_) => {
+                        warn!(player_id, "server state channel closed; disconnecting");
                         fatal = Some(NetError::ServerStateClosed);
                         true
-                    }, //watch sender dropped
                     }
                 }
-            };
+            }
+        };
+
         if disconnect {
+            if let Some(frame) = close_frame.take() {
+                let _ = socket.send(Message::Close(Some(frame))).await;
+            }
             if let Err(err) = socket.close().await.map_err(NetError::Ws) {
                 debug!(error = ?err, "socket close error");
             }
             break;
         }
     }
-    if let Err(e) = disconnect_cleanup(ctx).await {
+
+    if let Err(e) = disconnect_cleanup(player_id, input_tx, *msgs_in, *msgs_out, *bytes_in, *bytes_out, *invalid_json).await {
         warn!(error = ?e, "error during disconnect cleanup");
         if fatal.is_none() {
             fatal = Some(e);
@@ -228,55 +314,72 @@ async fn run_client_loop(socket: &mut WebSocket, ctx: &mut ConnCtx) -> Result<()
     }
 }
 
-fn handle_incoming_ws(
+async fn handle_incoming_ws(
+    _socket: &mut WebSocket,
     incoming: Option<Result<Message, Error>>,
     player_id: u64,
     input_tx: &mpsc::Sender<GameEvent>,
+    msgs_in: &mut u64,
+    bytes_in: &mut u64,
+    invalid_json: &mut u32,
+    last_input_full_log: &mut Instant,
+    last_invalid_input_log: &mut Instant,
+    close_frame: &mut Option<CloseFrame>,
 ) -> Result<LoopControl, NetError> {
     match incoming {
-        Some(Ok(msg)) => {
-            match msg {
-                Message::Text(text) => {
-                    // Parse JSON Input with error reporting
-                    // TODO: Validate/sanitize inputs (ranges, NaNs) before forwarding into the world task.
-                    // TODO: Consider disconnecting or rate-limiting on repeated invalid JSON (anti-spam).
-                    match serde_json::from_str::<PlayerInput>(&text) {
-                        Ok(input) => {
-                            // Forward input to World Task via Channel
-                            match input_tx.try_send(GameEvent::Input { player_id, input }) {
-                                Ok(()) => {}
-                                Err(tokio::sync::mpsc::error::TrySendError::Full(_evt)) => {
+        Some(Ok(msg)) => match msg {
+            Message::Text(text) => {
+                *msgs_in += 1;
+                *bytes_in += text.len() as u64;
+
+                match serde_json::from_str::<PlayerInput>(&text) {
+                    Ok(input) => {
+                        let Some(input) = sanitize_input(input) else {
+                            if should_log(last_invalid_input_log) {
+                                warn!(player_id, "invalid input values (NaN/inf); dropping");
+                            }
+                            return Ok(LoopControl::Continue);
+                        };
+
+                        match input_tx.try_send(GameEvent::Input { player_id, input }) {
+                            Ok(()) => Ok(LoopControl::Continue),
+                            Err(tokio::sync::mpsc::error::TrySendError::Full(_evt)) => {
+                                if should_log(last_input_full_log) {
                                     warn!(player_id, "input channel full; dropping input");
-                                    // TODO: Needs upgraded implementation with sampling. (When tracing
-                                    // is added)
-                                    // TODO: The input is dropped on Full. Decide policy:
-                                    // TODO: - drop newest vs drop oldest vs coalesce latest-per-player.
-                                    // TODO: - optionally disconnect clients that consistently overload.
                                 }
-                                Err(tokio::sync::mpsc::error::TrySendError::Closed(_evt)) => {
-                                    return Err(NetError::InputClosed);
-                                }
-                            };
-                            Ok(LoopControl::Continue)
-                        }
-                        Err(e) => {
-                            // TODO: Consider sending an error response (or closing) on malformed input.
-                            // TODO: Avoid logging full payloads at high volume; use truncation/sampling.
-                            warn!(player_id, bytes = text.len(), error = %e, "failed to parse player input");
-                            Ok(LoopControl::Continue)
+                                Ok(LoopControl::Continue)
+                            }
+                            Err(tokio::sync::mpsc::error::TrySendError::Closed(_evt)) => Err(NetError::InputClosed),
                         }
                     }
-                }
-                Message::Close(_) => Ok(LoopControl::Disconnect),
-                // Could be Ping/Pong or something else depending on the client, so continue
-                other => {
-                    // TODO: Explicitly handle Ping/Pong to keep connections healthy behind proxies.
-                    // TODO: Decide if Binary is supported; otherwise close with a clear reason.
-                    debug!(player_id, ?other, "non-text websocket message");
-                    Ok(LoopControl::Continue)
+                    Err(e) => {
+                        *invalid_json += 1;
+                        if should_log(last_invalid_input_log) {
+                            warn!(player_id, bytes = text.len(), error = %e, "failed to parse player input");
+                        }
+
+                        if *invalid_json > MAX_INVALID_JSON {
+                            *close_frame = Some(CloseFrame {
+                                code: close_code::POLICY,
+                                reason: "too many invalid messages".into(),
+                            });
+                            return Ok(LoopControl::Disconnect);
+                        }
+
+                        Ok(LoopControl::Continue)
+                    }
                 }
             }
-        }
+            Message::Binary(_) => {
+                *close_frame = Some(CloseFrame {
+                    code: close_code::UNSUPPORTED,
+                    reason: "binary messages not supported".into(),
+                });
+                Ok(LoopControl::Disconnect)
+            }
+            Message::Ping(_) | Message::Pong(_) => Ok(LoopControl::Continue),
+            Message::Close(_) => Ok(LoopControl::Disconnect),
+        },
         Some(Err(e)) => {
             warn!(player_id, error = %e, "websocket recv error");
             Ok(LoopControl::Disconnect)
@@ -288,34 +391,62 @@ fn handle_incoming_ws(
     }
 }
 
-async fn forward_world_update(world_msg: WorldUpdate, socket: &mut WebSocket) -> LoopControl {
+async fn forward_world_update(
+    world_msg: WorldUpdate,
+    socket: &mut WebSocket,
+    msgs_out: &mut u64,
+    bytes_out: &mut u64,
+) -> LoopControl {
     let msg = ServerMessage::WorldUpdate(world_msg);
-    if send_message(socket, &msg).await.is_err() {
-        LoopControl::Disconnect
-    } else {
+    if let Ok(bytes) = send_message(socket, &msg).await {
+        *msgs_out += 1;
+        *bytes_out += bytes as u64;
         LoopControl::Continue
+    } else {
+        LoopControl::Disconnect
     }
 }
 
 async fn forward_server_state(
     server_state_rx: &Receiver<ServerState>,
     socket: &mut WebSocket,
+    msgs_out: &mut u64,
+    bytes_out: &mut u64,
 ) -> LoopControl {
     let st = server_state_rx.borrow().clone();
     let msg = ServerMessage::GameState(st);
-    if send_message(socket, &msg).await.is_err() {
-        LoopControl::Disconnect
-    } else {
+    if let Ok(bytes) = send_message(socket, &msg).await {
+        *msgs_out += 1;
+        *bytes_out += bytes as u64;
         LoopControl::Continue
+    } else {
+        LoopControl::Disconnect
     }
 }
 
-async fn disconnect_cleanup(ctx: &mut ConnCtx) -> Result<(), NetError> {
-    let player_id = ctx.player_id;
-    ctx.input_tx
+async fn disconnect_cleanup(
+    player_id: u64,
+    input_tx: &mpsc::Sender<GameEvent>,
+    msgs_in: u64,
+    msgs_out: u64,
+    bytes_in: u64,
+    bytes_out: u64,
+    invalid_json: u32,
+) -> Result<(), NetError> {
+    input_tx
         .send(GameEvent::Leave { player_id })
         .await
         .map_err(|_| NetError::InputClosed)?;
+
+    debug!(
+        player_id,
+        msgs_in,
+        msgs_out,
+        bytes_in,
+        bytes_out,
+        invalid_json,
+        "connection stats"
+    );
     info!(player_id, "client disconnected");
     Ok(())
 }

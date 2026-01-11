@@ -3,6 +3,8 @@
 This document defines **how** and **where** tracing is implemented in Jet Raiders
 so that bugs and crashes can be pinpointed quickly.
 
+For an in-depth implementation guide, see `TRACING_DEEP_DIVE.md`.
+
 The design is intentionally based on widely adopted production patterns in Rust:
 
 - `tracing` events with **structured fields** (not string parsing)
