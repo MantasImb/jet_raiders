@@ -398,12 +398,17 @@ async fn forward_world_update(
     bytes_out: &mut u64,
 ) -> LoopControl {
     let msg = ServerMessage::WorldUpdate(world_msg);
-    if let Ok(bytes) = send_message(socket, &msg).await {
-        *msgs_out += 1;
-        *bytes_out += bytes as u64;
-        LoopControl::Continue
-    } else {
-        LoopControl::Disconnect
+    match send_message(socket, &msg).await {
+        Ok(bytes) => {
+            *msgs_out += 1;
+            *bytes_out += bytes as u64;
+            LoopControl::Continue
+        }
+        Err(err) => {
+            // Log unexpected send failures; disconnect will follow immediately.
+            warn!(error = ?err, "failed to send world update");
+            LoopControl::Disconnect
+        }
     }
 }
 
@@ -415,12 +420,17 @@ async fn forward_server_state(
 ) -> LoopControl {
     let st = server_state_rx.borrow().clone();
     let msg = ServerMessage::GameState(st);
-    if let Ok(bytes) = send_message(socket, &msg).await {
-        *msgs_out += 1;
-        *bytes_out += bytes as u64;
-        LoopControl::Continue
-    } else {
-        LoopControl::Disconnect
+    match send_message(socket, &msg).await {
+        Ok(bytes) => {
+            *msgs_out += 1;
+            *bytes_out += bytes as u64;
+            LoopControl::Continue
+        }
+        Err(err) => {
+            // Log unexpected send failures; disconnect will follow immediately.
+            warn!(error = ?err, "failed to send server state");
+            LoopControl::Disconnect
+        }
     }
 }
 
