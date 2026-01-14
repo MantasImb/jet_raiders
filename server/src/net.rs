@@ -1,17 +1,21 @@
+use crate::app_state::AppState;
 use crate::protocol::{GameEvent, PlayerInput, ServerMessage, WorldUpdate};
-use crate::state::{AppState, ServerState};
+use crate::state::ServerState;
 use crate::utils::rng::rand_id;
 
 use axum::{
     Error,
     extract::{
         State,
-        ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade, close_code},
+        ws::{CloseFrame, Message, Utf8Bytes, WebSocket, WebSocketUpgrade, close_code},
     },
     response::IntoResponse,
 };
 use futures::SinkExt;
-use std::{sync::Arc, time::{Duration, Instant}};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use tokio::sync::watch::Receiver;
 use tokio::sync::{broadcast, mpsc, watch};
 use tracing::{debug, error, info, info_span, warn};
@@ -26,6 +30,41 @@ enum NetError {
     InputClosed,
     WorldUpdatesClosed,
     ServerStateClosed,
+}
+
+pub async fn world_update_serializer(
+    mut world_rx: broadcast::Receiver<WorldUpdate>,
+    world_bytes_tx: broadcast::Sender<Utf8Bytes>,
+) {
+    // Serialize each world update once and broadcast the shared bytes.
+    loop {
+        match world_rx.recv().await {
+            Ok(update) => {
+                let msg = ServerMessage::WorldUpdate(update);
+                let txt = match serde_json::to_string(&msg) {
+                    Ok(txt) => txt,
+                    Err(e) => {
+                        error!(error = ?e, "failed to serialize world update");
+                        continue;
+                    }
+                };
+
+                // Convert once and broadcast shared UTF-8 bytes to all clients.
+                let bytes = Utf8Bytes::from(txt);
+                let _ = world_bytes_tx.send(bytes);
+            }
+            Err(broadcast::error::RecvError::Lagged(n)) => {
+                warn!(
+                    missed = n,
+                    "world serializer lagged; skipping to latest update"
+                );
+            }
+            Err(broadcast::error::RecvError::Closed) => {
+                warn!("world updates channel closed; serializer exiting");
+                break;
+            }
+        }
+    }
 }
 
 impl From<axum::Error> for NetError {
@@ -86,7 +125,7 @@ async fn send_message(socket: &mut WebSocket, msg: &ServerMessage) -> Result<usi
 struct ConnCtx {
     pub player_id: u64,
     pub input_tx: mpsc::Sender<GameEvent>,
-    pub world_rx: broadcast::Receiver<WorldUpdate>,
+    pub world_bytes_rx: broadcast::Receiver<Utf8Bytes>,
     pub server_state_rx: watch::Receiver<ServerState>,
 
     pub msgs_in: u64,
@@ -108,7 +147,7 @@ async fn bootstrap_connection(
     state: &AppState,
 ) -> Result<ConnCtx, NetError> {
     // Subscribe to updates *before* doing anything else (awaits) to not miss packets.
-    let world_rx = state.world_tx.subscribe();
+    let world_bytes_rx = state.world_bytes_tx.subscribe();
     let server_state_rx = state.server_state_tx.subscribe();
 
     // Handshake & ID Assignment
@@ -148,7 +187,7 @@ async fn bootstrap_connection(
     let now = Instant::now() - LOG_THROTTLE;
     Ok(ConnCtx {
         player_id,
-        world_rx,
+        world_bytes_rx,
         server_state_rx,
         input_tx: state.input_tx.clone(),
 
@@ -201,7 +240,7 @@ async fn run_client_loop(socket: &mut WebSocket, ctx: &mut ConnCtx) -> Result<()
     // Split borrows so `tokio::select!` can hold them concurrently.
     let ConnCtx {
         input_tx,
-        world_rx,
+        world_bytes_rx,
         server_state_rx,
         msgs_in,
         msgs_out,
@@ -244,9 +283,9 @@ async fn run_client_loop(socket: &mut WebSocket, ctx: &mut ConnCtx) -> Result<()
             }
 
             // Outgoing World Update
-            world_msg = world_rx.recv() => {
+            world_msg = world_bytes_rx.recv() => {
                 match world_msg {
-                    Ok(update) => match forward_world_update(update, socket, msgs_out, bytes_out).await {
+                    Ok(bytes) => match forward_world_bytes(bytes, socket, msgs_out, bytes_out).await {
                         LoopControl::Continue => false,
                         LoopControl::Disconnect => true,
                     },
@@ -300,7 +339,17 @@ async fn run_client_loop(socket: &mut WebSocket, ctx: &mut ConnCtx) -> Result<()
         }
     }
 
-    if let Err(e) = disconnect_cleanup(player_id, input_tx, *msgs_in, *msgs_out, *bytes_in, *bytes_out, *invalid_json).await {
+    if let Err(e) = disconnect_cleanup(
+        player_id,
+        input_tx,
+        *msgs_in,
+        *msgs_out,
+        *bytes_in,
+        *bytes_out,
+        *invalid_json,
+    )
+    .await
+    {
         warn!(error = ?e, "error during disconnect cleanup");
         if fatal.is_none() {
             fatal = Some(e);
@@ -314,6 +363,7 @@ async fn run_client_loop(socket: &mut WebSocket, ctx: &mut ConnCtx) -> Result<()
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_incoming_ws(
     _socket: &mut WebSocket,
     incoming: Option<Result<Message, Error>>,
@@ -349,7 +399,9 @@ async fn handle_incoming_ws(
                                 }
                                 Ok(LoopControl::Continue)
                             }
-                            Err(tokio::sync::mpsc::error::TrySendError::Closed(_evt)) => Err(NetError::InputClosed),
+                            Err(tokio::sync::mpsc::error::TrySendError::Closed(_evt)) => {
+                                Err(NetError::InputClosed)
+                            }
                         }
                     }
                     Err(e) => {
@@ -391,17 +443,21 @@ async fn handle_incoming_ws(
     }
 }
 
-async fn forward_world_update(
-    world_msg: WorldUpdate,
+async fn forward_world_bytes(
+    world_msg: Utf8Bytes,
     socket: &mut WebSocket,
     msgs_out: &mut u64,
     bytes_out: &mut u64,
 ) -> LoopControl {
-    let msg = ServerMessage::WorldUpdate(world_msg);
-    match send_message(socket, &msg).await {
-        Ok(bytes) => {
+    let bytes_len = world_msg.len();
+    match socket
+        .send(Message::Text(world_msg))
+        .await
+        .map_err(NetError::Ws)
+    {
+        Ok(()) => {
             *msgs_out += 1;
-            *bytes_out += bytes as u64;
+            *bytes_out += bytes_len as u64;
             LoopControl::Continue
         }
         Err(err) => {
@@ -450,12 +506,7 @@ async fn disconnect_cleanup(
 
     debug!(
         player_id,
-        msgs_in,
-        msgs_out,
-        bytes_in,
-        bytes_out,
-        invalid_json,
-        "connection stats"
+        msgs_in, msgs_out, bytes_in, bytes_out, invalid_json, "connection stats"
     );
     info!(player_id, "client disconnected");
     Ok(())

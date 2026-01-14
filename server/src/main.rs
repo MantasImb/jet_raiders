@@ -3,6 +3,7 @@ mod game;
 mod lobby;
 mod net;
 mod protocol;
+mod app_state;
 mod state;
 mod systems;
 mod tuning;
@@ -11,9 +12,10 @@ mod utils;
 use crate::game::world_task;
 use crate::net::ws_handler;
 use crate::protocol::{GameEvent, WorldUpdate};
-use crate::state::{AppState, ServerState};
+use crate::app_state::AppState;
+use crate::state::ServerState;
 
-use axum::{Router, routing::get};
+use axum::{Router, routing::get, extract::ws::Utf8Bytes};
 use std::{net::SocketAddr, sync::Arc};
 use tokio::sync::{broadcast, mpsc, watch};
 
@@ -53,12 +55,17 @@ async fn main() {
     // world_tx/rx: World updates are broadcast to all clients.
     let (world_tx, _world_rx) = broadcast::channel::<WorldUpdate>(config::WORLD_BROADCAST_CAPACITY);
 
+    // world_bytes_tx/rx: Serialized world updates shared across all clients.
+    let (world_bytes_tx, _world_bytes_rx) =
+        broadcast::channel::<Utf8Bytes>(config::WORLD_BROADCAST_CAPACITY);
+
     // server_state_tx: High-level state (Lobby, MatchRunning) changes.
     let (server_state_tx, _server_state_rx) = watch::channel::<ServerState>(ServerState::Lobby);
 
     let state = Arc::new(AppState {
         input_tx,
         world_tx,
+        world_bytes_tx,
         server_state_tx,
     });
 
@@ -68,6 +75,12 @@ async fn main() {
         input_rx,
         state.world_tx.clone(),
         state.server_state_tx.clone(),
+    ));
+
+    // Spawn the world update serializer task in the adapter layer.
+    tokio::spawn(net::world_update_serializer(
+        state.world_tx.subscribe(),
+        state.world_bytes_tx.clone(),
     ));
 
     // Start the Web Server
