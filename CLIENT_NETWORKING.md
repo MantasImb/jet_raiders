@@ -151,9 +151,3 @@ or
        (often `(0, 0)`), then lerp normally.
 
 4. **GameState**: Update UI (timers, screens).
-
-## 5. Migration Note
-
-The client is currently transitioning from Godot's built-in
-`ENetMultiplayerPeer` to this WebSocket-based architecture. See
-`CLIENT_MIGRATION.md` for the step-by-step cleanup and reconstruction plan.
