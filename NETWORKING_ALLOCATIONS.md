@@ -6,7 +6,7 @@ solves.
 
 It is specifically about this server code:
 
-- `server/src/net.rs`
+- `game_server/src/net.rs`
 - `send_message(...)` and callers like `forward_world_update(...)`
 
 ## Quick glossary
@@ -42,7 +42,7 @@ In our current protocol, the bytes we send are **JSON text**.
 
 ## What we do today
 
-In `server/src/net.rs`, our send path is roughly:
+In `game_server/src/net.rs`, our send path is roughly:
 
 1. Convert `ServerMessage` to JSON
 2. Send the JSON text via WebSocket

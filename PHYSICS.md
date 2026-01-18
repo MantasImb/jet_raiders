@@ -77,7 +77,7 @@ For movement, the server uses:
 The game world is a torus (loops around).
 
 - **Logic**: If a player moves past a border, they teleport to the opposite side.
-- **Server implementation**: currently hardcoded in `server/src/game.rs` (then passed into `MovementConfig`).
+- **Server implementation**: currently hardcoded in `game_server/src/game.rs` (then passed into `MovementConfig`).
 - **Client rendering note**: because wrapping is a teleport, client-side interpolation should **snap** on large jumps (otherwise the ship will lerp across the whole screen).
 
 - **Implementation**:

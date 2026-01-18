@@ -1,7 +1,7 @@
 # Clean Architecture Separation Guide (How to do it)
 
 This document is an action-oriented guide for separating logic out of
-`server/src/main.rs` into the modules described in `ARCHITECTURE.md`, while
+`game_server/src/main.rs` into the modules described in `ARCHITECTURE.md`, while
 respecting the boundaries defined in `CLEAN_ARCHITECTURE_GUIDELINES.md`.
 
 This is intentionally simpler than the longer playbooks; use it as your primary

@@ -6,17 +6,21 @@ model using Rust.
 
 ## 1. High-Level Architecture
 
-We are moving to a **Server-Authoritative** model. The server is the single
+We are moving to a **Server-Authoritative** model. The game server is the single
 source of truth. Clients are "dumb" terminals that send inputs and render the
 state received from the server.
 
 ```mermaid
 graph TD
-    Client[Godot Web Client] <-->|WebSocket JSON| Axum[Rust Server Axum]
-    Axum -->|Connection/Disconnection| GameLoop
-    Axum -->|Player Inputs| InputQueue
+    Client[Game Client (Godot)] -->|HTTPS| Website[Website + Launcher]
+    Website -->|HTTPS| Head[Head Service]
+    Head -->|HTTPS| Auth[Auth Service]
+    Head -->|HTTPS| Matchmaking[Matchmaking Service]
+    Client -->|HTTPS| Matchmaking
+    Matchmaking -->|Lobby Assignment| Client
+    Client <-->|WebSocket JSON| GameServer[Regional Game Server]
 
-    subgraph Rust Server
+    subgraph Game Server
         GameLoop[Game Loop 60 Hz]
         InputQueue[Input Queue]
         State[Game World State]
@@ -26,29 +30,62 @@ graph TD
         GameLoop -->|Snapshot| State
     end
 
-    State -->|World Snapshot| Axum
+    State -->|World Snapshot| GameServer
 ```
 
-## 1.1 Multi-Lobby Architecture
+## 1.1 Service Boundaries
+
+The platform is decomposed into reusable services:
+
+- **Website + Launcher**: Frontpage, marketing content, and game entry point.
+- **Head Service**: Account/profile APIs and coordination for session and match
+  flow.
+- **Auth Service**: Login validation and session token issuance.
+- **Matchmaking Service**: Queue management and lobby assignment.
+- **Game Server**: Real-time simulation and authoritative state per lobby.
+
+## 1.2 Multi-Lobby Architecture
 
 The server acts as a **Lobby Manager**.
 
-1. **Connection**: Client connects to `ws://server/ws`.
-2. **Handshake**: Client sends `Join { lobby_id: "Room1" }`.
-3. **Routing**:
+1. **Assignment**: Matchmaking returns a `lobby_id` and server address.
+2. **Connection**: Client connects to `ws://server/ws`.
+3. **Handshake**: Client sends `Join { lobby_id: "Room1" }`.
+4. **Routing**:
     - If "Room1" exists: Connect client to that running game loop.
     - If "Room1" is missing: Create a new `GameLoop` task for it.
-4. **Isolation**: Each Lobby runs in its own Tokio Task. A crash or lag spike
+5. **Isolation**: Each Lobby runs in its own Tokio Task. A crash or lag spike
     in one lobby does not affect others.
 
-## 2. Server Project Structure (`server/src/`)
+## 1.3 Client Authentication Path
+
+The game client should authenticate through the head service, which then calls
+the auth service to validate login proofs and issue session tokens. This keeps
+the auth service reusable and avoids forcing the client to integrate with auth
+endpoints directly, while still allowing optional direct auth access for
+launcher-only flows.
+
+## 2. Repository Layout
+
+The repository now includes directories for the planned services:
+
+```text
+auth_server/         # Auth service (token issuance/verification).
+game_client/         # Godot client project (target home).
+game_server/         # Current Axum game server (to split out later).
+head_server/         # Head service (profile, platform APIs).
+matchmaking_server/  # Matchmaking service (queue + assignment).
+website/             # Frontpage/launcher.
+```
+
+## 3. Game Server Project Structure (`game_server/src/`)
 
 We will use a modular "Simple Structs" approach. We will implement **Multiple
 Lobbies** support, where the main server manages multiple isolated game
 sessions.
 
 ```text
-server/
+game_server/
 ├── Cargo.toml          # Dependencies: axum, tokio, serde, etc.
 └── src/
     ├── main.rs         # Entry point. Sets up Axum and the LobbyManager.
@@ -64,7 +101,7 @@ server/
         └── projectiles.rs
 ```
 
-## 3. Communication Protocol (`protocol.rs`)
+## 4. Communication Protocol (`protocol.rs`)
 
 We will use JSON for messages initially for easy debugging.
 
@@ -115,7 +152,7 @@ enum GameEvent {
 }
 ```
 
-## 4. Game State Data (`state.rs`)
+## 5. Game State Data (`state.rs`)
 
 The `GameState` struct holds the entire world.
 
@@ -147,7 +184,7 @@ pub struct Projectile {
 }
 ```
 
-## 5. The Game Loop (`game.rs`)
+## 6. The Game Loop (`game.rs`)
 
 The server runs at a fixed tick rate (e.g., 60 ticks per second).
 
@@ -163,30 +200,13 @@ The server runs at a fixed tick rate (e.g., 60 ticks per second).
 4. **Broadcast State**: Serialize `GameState` into a `WorldSnapshot` and
    send it to all connected clients via `net.rs`.
 
-## 6. Client Refactoring (Godot)
+## 7. Client Notes
 
-The Godot client needs to change from "Processing Logic" to "Displaying State".
+Client refactor details live alongside the Godot project and game client docs.
+The client remains responsible for sending inputs and rendering server
+snapshots.
 
-1. **NetworkManager.gd**:
-   - Replace `ENetMultiplayerPeer` with `WebSocketPeer` (or a dedicated WebSocket
-     node).
-   - Implement a buffer to handle incoming JSON packets.
-   - Deserialization logic: `JSON -> Dictionary -> Update Nodes`.
-
-2. **Player.gd**:
-   - Remove physics processing (`_physics_process`). The client no longer
-     calculates position!
-   - Add `target_position` and `target_rotation`.
-   - Use `lerp` (Linear Interpolation) in `_process` to smoothly move the
-     visual sprite to the `target_position` received from the server. This
-     hides network latency (Smoothing).
-
-3. **GameManager.gd**:
-   - Remove game logic (score checking, respawning).
-   - Listen for `GameEvent` messages from the server to show UI (e.g., "Player X
-     won!").
-
-## 7. Future Extensibility
+## 8. Future Extensibility
 
 - **New Weapons**: Add a `weapon_type` enum to `Player` and switch logic in `projectiles.rs`.
 - **Power-ups**: Add a `Vec<PowerUp>` to `GameState` and a `powerup.rs` system.
