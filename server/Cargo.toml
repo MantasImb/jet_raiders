@@ -16,3 +16,5 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.148"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+dotenvy = "0.15.7"
+sqlx = { version = "0.8.6", features = ["runtime-tokio", "postgres", "macros", "migrate"] }

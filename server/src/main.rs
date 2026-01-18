@@ -1,23 +1,28 @@
+mod app_state;
 mod config;
+mod db;
+mod guest;
 mod game;
 mod lobby;
 mod net;
 mod protocol;
-mod app_state;
 mod state;
 mod systems;
 mod tuning;
 mod utils;
 
+use crate::app_state::AppState;
 use crate::game::world_task;
 use crate::net::ws_handler;
 use crate::protocol::{GameEvent, WorldUpdate};
-use crate::app_state::AppState;
 use crate::state::ServerState;
+use sqlx::migrate::Migrator;
 
-use axum::{Router, routing::get, extract::ws::Utf8Bytes};
+use axum::{Router, extract::ws::Utf8Bytes, routing::get};
 use std::{net::SocketAddr, sync::Arc};
 use tokio::sync::{broadcast, mpsc, watch};
+
+static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 
 fn init_tracing() {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
@@ -47,6 +52,8 @@ fn init_tracing() {
 
 #[tokio::main]
 async fn main() {
+    // Load .env locally; safe to ignore when not present.
+    let _ = dotenvy::dotenv();
     init_tracing();
     // Setup Channels
     // input_tx/rx: All client inputs go to the single World Task.
@@ -58,15 +65,39 @@ async fn main() {
     // world_bytes_tx/rx: Serialized world updates shared across all clients.
     let (world_bytes_tx, _world_bytes_rx) =
         broadcast::channel::<Utf8Bytes>(config::WORLD_BROADCAST_CAPACITY);
+    let (world_latest_tx, _world_latest_rx) = watch::channel::<Utf8Bytes>(Utf8Bytes::from(""));
 
     // server_state_tx: High-level state (Lobby, MatchRunning) changes.
     let (server_state_tx, _server_state_rx) = watch::channel::<ServerState>(ServerState::Lobby);
+
+    let database_url = match std::env::var("DATABASE_URL") {
+        Ok(value) => value,
+        Err(_) => {
+            tracing::error!("DATABASE_URL must be set");
+            return;
+        }
+    };
+
+    let db = match db::connect_pool(&database_url).await {
+        Ok(pool) => pool,
+        Err(e) => {
+            tracing::error!(error = %e, "failed to connect to database");
+            return;
+        }
+    };
+
+    if let Err(e) = MIGRATOR.run(&db).await {
+        tracing::error!(error = %e, "failed to run migrations");
+        return;
+    }
 
     let state = Arc::new(AppState {
         input_tx,
         world_tx,
         world_bytes_tx,
+        world_latest_tx,
         server_state_tx,
+        db,
     });
 
     // Spawn the Game Loop (World Task)
@@ -81,6 +112,7 @@ async fn main() {
     tokio::spawn(net::world_update_serializer(
         state.world_tx.subscribe(),
         state.world_bytes_tx.clone(),
+        state.world_latest_tx.clone(),
     ));
 
     // Start the Web Server

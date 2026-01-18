@@ -1,6 +1,6 @@
 use crate::config;
 use crate::protocol::{GameEvent, PlayerInput, WorldUpdate};
-use crate::state::{EntityState, ServerState, SimEntity};
+use crate::state::{EntityState, ProjectileState, ServerState, SimEntity};
 use crate::systems::{projectiles, ship_movement};
 use crate::tuning::player::PlayerTuning;
 use crate::tuning::projectile::ProjectileTuning;
@@ -96,6 +96,7 @@ pub async fn world_task(
         };
 
         for e in &mut entities {
+            // Respawn logic.
             if !e.alive {
                 e.respawn_timer -= dt;
                 if e.respawn_timer <= 0.0 {
@@ -147,10 +148,8 @@ pub async fn world_task(
             .filter(|e| e.alive)
             .map(EntityState::from)
             .collect();
-        let projectiles_snapshot: Vec<crate::state::ProjectileState> = projectiles
-            .iter()
-            .map(crate::state::ProjectileState::from)
-            .collect();
+        let projectiles_snapshot: Vec<ProjectileState> =
+            projectiles.iter().map(ProjectileState::from).collect();
 
         let _ = world_tx.send(WorldUpdate {
             tick,

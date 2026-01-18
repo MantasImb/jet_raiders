@@ -17,6 +17,21 @@ pub enum ServerMessage {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "type", content = "data")]
+pub enum ClientMessage {
+    // Initial handshake message with guest identity data.
+    Join(JoinPayload),
+    // Input messages sent after a successful Join.
+    Input(PlayerInput),
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct JoinPayload {
+    pub guest_id: String,
+    pub display_name: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct PlayerInput {
     #[serde(default)]
     pub thrust: f32,

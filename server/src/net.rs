@@ -1,5 +1,6 @@
 use crate::app_state::AppState;
-use crate::protocol::{GameEvent, PlayerInput, ServerMessage, WorldUpdate};
+use crate::guest;
+use crate::protocol::{ClientMessage, GameEvent, PlayerInput, ServerMessage, WorldUpdate};
 use crate::state::ServerState;
 use crate::utils::rng::rand_id;
 
@@ -12,6 +13,7 @@ use axum::{
     response::IntoResponse,
 };
 use futures::SinkExt;
+use sqlx::PgPool;
 use std::{
     sync::Arc,
     time::{Duration, Instant},
@@ -35,6 +37,7 @@ enum NetError {
 pub async fn world_update_serializer(
     mut world_rx: broadcast::Receiver<WorldUpdate>,
     world_bytes_tx: broadcast::Sender<Utf8Bytes>,
+    world_latest_tx: watch::Sender<Utf8Bytes>,
 ) {
     // Serialize each world update once and broadcast the shared bytes.
     loop {
@@ -51,6 +54,8 @@ pub async fn world_update_serializer(
 
                 // Convert once and broadcast shared UTF-8 bytes to all clients.
                 let bytes = Utf8Bytes::from(txt);
+                // Store the latest bytes for lag recovery.
+                let _ = world_latest_tx.send(bytes.clone());
                 let _ = world_bytes_tx.send(bytes);
             }
             Err(broadcast::error::RecvError::Lagged(n)) => {
@@ -86,7 +91,7 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
     let span = info_span!("conn", conn_id, player_id = tracing::field::Empty);
     let _enter = span.enter();
 
-    let mut ctx = match bootstrap_connection(&mut socket, &state).await {
+    let mut ctx = match bootstrap_connection(&mut socket, &state, state.db.clone()).await {
         Ok(ctx) => ctx,
         Err(e) => {
             error!(error = ?e, "failed to bootstrap connection");
@@ -126,7 +131,14 @@ struct ConnCtx {
     pub player_id: u64,
     pub input_tx: mpsc::Sender<GameEvent>,
     pub world_bytes_rx: broadcast::Receiver<Utf8Bytes>,
+    pub world_latest_rx: watch::Receiver<Utf8Bytes>,
     pub server_state_rx: watch::Receiver<ServerState>,
+    pub db: PgPool,
+    pub guest_id: Option<String>,
+    pub display_name: Option<String>,
+    pub has_joined: bool,
+    // Count lag recovery snapshots sent to this client.
+    pub lag_recovery_count: u64,
 
     pub msgs_in: u64,
     pub msgs_out: u64,
@@ -145,9 +157,11 @@ struct ConnCtx {
 async fn bootstrap_connection(
     socket: &mut WebSocket,
     state: &AppState,
+    db: PgPool,
 ) -> Result<ConnCtx, NetError> {
     // Subscribe to updates *before* doing anything else (awaits) to not miss packets.
     let world_bytes_rx = state.world_bytes_tx.subscribe();
+    let world_latest_rx = state.world_latest_tx.subscribe();
     let server_state_rx = state.server_state_tx.subscribe();
 
     // Handshake & ID Assignment
@@ -188,8 +202,14 @@ async fn bootstrap_connection(
     Ok(ConnCtx {
         player_id,
         world_bytes_rx,
+        world_latest_rx,
         server_state_rx,
         input_tx: state.input_tx.clone(),
+        db,
+        guest_id: None,
+        display_name: None,
+        has_joined: false,
+        lag_recovery_count: 0,
 
         msgs_in: 0,
         msgs_out: 0,
@@ -213,6 +233,9 @@ enum LoopControl {
 
 const LOG_THROTTLE: Duration = Duration::from_secs(2);
 const MAX_INVALID_JSON: u32 = 10;
+const MAX_GUEST_ID_LEN: usize = 64;
+const MAX_DISPLAY_NAME_LEN: usize = 32;
+const DEFAULT_DISPLAY_NAME: &str = "Pilot";
 
 fn should_log(last: &mut Instant) -> bool {
     if last.elapsed() >= LOG_THROTTLE {
@@ -234,6 +257,33 @@ fn sanitize_input(mut input: PlayerInput) -> Option<PlayerInput> {
     Some(input)
 }
 
+// Shared input handling for both legacy and structured messages.
+fn process_input_message(
+    player_id: u64,
+    input_tx: &mpsc::Sender<GameEvent>,
+    input: PlayerInput,
+    last_input_full_log: &mut Instant,
+    last_invalid_input_log: &mut Instant,
+) -> Result<LoopControl, NetError> {
+    let Some(input) = sanitize_input(input) else {
+        if should_log(last_invalid_input_log) {
+            warn!(player_id, "invalid input values (NaN/inf); dropping");
+        }
+        return Ok(LoopControl::Continue);
+    };
+
+    match input_tx.try_send(GameEvent::Input { player_id, input }) {
+        Ok(()) => Ok(LoopControl::Continue),
+        Err(tokio::sync::mpsc::error::TrySendError::Full(_evt)) => {
+            if should_log(last_input_full_log) {
+                warn!(player_id, "input channel full; dropping input");
+            }
+            Ok(LoopControl::Continue)
+        }
+        Err(tokio::sync::mpsc::error::TrySendError::Closed(_evt)) => Err(NetError::InputClosed),
+    }
+}
+
 async fn run_client_loop(socket: &mut WebSocket, ctx: &mut ConnCtx) -> Result<(), NetError> {
     let player_id = ctx.player_id;
 
@@ -241,7 +291,13 @@ async fn run_client_loop(socket: &mut WebSocket, ctx: &mut ConnCtx) -> Result<()
     let ConnCtx {
         input_tx,
         world_bytes_rx,
+        world_latest_rx,
         server_state_rx,
+        db,
+        guest_id,
+        display_name,
+        has_joined,
+        lag_recovery_count,
         msgs_in,
         msgs_out,
         bytes_in,
@@ -266,6 +322,10 @@ async fn run_client_loop(socket: &mut WebSocket, ctx: &mut ConnCtx) -> Result<()
                     incoming,
                     player_id,
                     input_tx,
+                    db,
+                    guest_id,
+                    display_name,
+                    has_joined,
                     msgs_in,
                     bytes_in,
                     invalid_json,
@@ -294,15 +354,33 @@ async fn run_client_loop(socket: &mut WebSocket, ctx: &mut ConnCtx) -> Result<()
                             warn!(missed = n, "world updates lagged; sending snapshot");
                         }
 
-                        // Resync strategy: send the latest GameState snapshot.
-                        let st = server_state_rx.borrow().clone();
-                        match send_message(socket, &ServerMessage::GameState(st)).await {
-                            Ok(bytes) => {
-                                *msgs_out += 1;
-                                *bytes_out += bytes as u64;
-                                false
+                        // Resync strategy: send the latest world snapshot.
+                        let latest = world_latest_rx.borrow().clone();
+                        if latest.is_empty() {
+                            if should_log(last_world_lag_log) {
+                                warn!("world snapshot unavailable during lag recovery");
                             }
-                            Err(_) => true,
+                            false
+                        } else {
+                            let bytes_len = latest.len();
+                            // Track how often we need to recover from lag.
+                            *lag_recovery_count += 1;
+                            let outcome =
+                                forward_world_bytes(latest, socket, msgs_out, bytes_out).await;
+
+                            if should_log(last_world_lag_log) {
+                                debug!(
+                                    player_id,
+                                    bytes = bytes_len,
+                                    count = *lag_recovery_count,
+                                    "sent lag recovery snapshot"
+                                );
+                            }
+
+                            match outcome {
+                                LoopControl::Continue => false,
+                                LoopControl::Disconnect => true,
+                            }
                         }
                     }
                     Err(broadcast::error::RecvError::Closed) => {
@@ -347,6 +425,7 @@ async fn run_client_loop(socket: &mut WebSocket, ctx: &mut ConnCtx) -> Result<()
         *bytes_in,
         *bytes_out,
         *invalid_json,
+        *lag_recovery_count,
     )
     .await
     {
@@ -369,6 +448,10 @@ async fn handle_incoming_ws(
     incoming: Option<Result<Message, Error>>,
     player_id: u64,
     input_tx: &mpsc::Sender<GameEvent>,
+    db: &PgPool,
+    guest_id: &mut Option<String>,
+    display_name: &mut Option<String>,
+    has_joined: &mut bool,
     msgs_in: &mut u64,
     bytes_in: &mut u64,
     invalid_json: &mut u32,
@@ -382,43 +465,85 @@ async fn handle_incoming_ws(
                 *msgs_in += 1;
                 *bytes_in += text.len() as u64;
 
-                match serde_json::from_str::<PlayerInput>(&text) {
-                    Ok(input) => {
-                        let Some(input) = sanitize_input(input) else {
+                match serde_json::from_str::<ClientMessage>(&text) {
+                    Ok(ClientMessage::Join(payload)) => {
+                        // Join is the only time we persist guest profile data.
+                        let guest = payload.guest_id.trim();
+                        if guest.is_empty() || guest.len() > MAX_GUEST_ID_LEN {
                             if should_log(last_invalid_input_log) {
-                                warn!(player_id, "invalid input values (NaN/inf); dropping");
+                                warn!(player_id, "invalid guest_id on join");
                             }
                             return Ok(LoopControl::Continue);
-                        };
+                        }
 
-                        match input_tx.try_send(GameEvent::Input { player_id, input }) {
-                            Ok(()) => Ok(LoopControl::Continue),
-                            Err(tokio::sync::mpsc::error::TrySendError::Full(_evt)) => {
-                                if should_log(last_input_full_log) {
-                                    warn!(player_id, "input channel full; dropping input");
+                        let mut name = payload.display_name.trim();
+                        if name.is_empty() {
+                            name = DEFAULT_DISPLAY_NAME;
+                        }
+                        if name.len() > MAX_DISPLAY_NAME_LEN {
+                            if should_log(last_invalid_input_log) {
+                                warn!(player_id, "display name too long; ignoring");
+                            }
+                            return Ok(LoopControl::Continue);
+                        }
+
+                        if let Err(e) = guest::upsert_guest(db, guest, name, "{}").await {
+                            warn!(player_id, error = %e, "failed to upsert guest profile");
+                        }
+
+                        *guest_id = Some(guest.to_string());
+                        *display_name = Some(name.to_string());
+                        *has_joined = true;
+                        Ok(LoopControl::Continue)
+                    }
+                    Ok(ClientMessage::Input(input)) => {
+                        if !*has_joined {
+                            if should_log(last_invalid_input_log) {
+                                warn!(player_id, "received input before join");
+                            }
+                            return Ok(LoopControl::Continue);
+                        }
+
+                        process_input_message(
+                            player_id,
+                            input_tx,
+                            input,
+                            last_input_full_log,
+                            last_invalid_input_log,
+                        )
+                    }
+                    Err(parse_err) => {
+                        // Legacy client fallback: accept raw PlayerInput messages.
+                        match serde_json::from_str::<PlayerInput>(&text) {
+                            Ok(input) => process_input_message(
+                                player_id,
+                                input_tx,
+                                input,
+                                last_input_full_log,
+                                last_invalid_input_log,
+                            ),
+                            Err(_) => {
+                                *invalid_json += 1;
+                                if should_log(last_invalid_input_log) {
+                                    warn!(
+                                        player_id,
+                                        bytes = text.len(),
+                                        error = %parse_err,
+                                        "failed to parse client message"
+                                    );
                                 }
+
+                                if *invalid_json > MAX_INVALID_JSON {
+                                    *close_frame = Some(CloseFrame {
+                                        code: close_code::POLICY,
+                                        reason: "too many invalid messages".into(),
+                                    });
+                                    return Ok(LoopControl::Disconnect);
+                                }
+
                                 Ok(LoopControl::Continue)
                             }
-                            Err(tokio::sync::mpsc::error::TrySendError::Closed(_evt)) => {
-                                Err(NetError::InputClosed)
-                            }
                         }
-                    }
-                    Err(e) => {
-                        *invalid_json += 1;
-                        if should_log(last_invalid_input_log) {
-                            warn!(player_id, bytes = text.len(), error = %e, "failed to parse player input");
-                        }
-
-                        if *invalid_json > MAX_INVALID_JSON {
-                            *close_frame = Some(CloseFrame {
-                                code: close_code::POLICY,
-                                reason: "too many invalid messages".into(),
-                            });
-                            return Ok(LoopControl::Disconnect);
-                        }
-
-                        Ok(LoopControl::Continue)
                     }
                 }
             }
@@ -498,6 +623,7 @@ async fn disconnect_cleanup(
     bytes_in: u64,
     bytes_out: u64,
     invalid_json: u32,
+    lag_recovery_count: u64,
 ) -> Result<(), NetError> {
     input_tx
         .send(GameEvent::Leave { player_id })
@@ -506,7 +632,13 @@ async fn disconnect_cleanup(
 
     debug!(
         player_id,
-        msgs_in, msgs_out, bytes_in, bytes_out, invalid_json, "connection stats"
+        msgs_in,
+        msgs_out,
+        bytes_in,
+        bytes_out,
+        invalid_json,
+        lag_recovery_count,
+        "connection stats"
     );
     info!(player_id, "client disconnected");
     Ok(())

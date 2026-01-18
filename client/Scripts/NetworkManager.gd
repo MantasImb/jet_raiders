@@ -2,6 +2,8 @@ extends Node
 class_name NetworkManager
 
 const SOCKET_URL = "ws://127.0.0.1:3000/ws"
+const PROFILE_PATH = "user://guest_profile.json"
+const DEFAULT_DISPLAY_NAME = "Pilot"
 
 var socket: WebSocketPeer = WebSocketPeer.new()
 var connected: bool = false
@@ -11,11 +13,15 @@ var player_scene: PackedScene = preload("res://Scenes/player.tscn")
 var projectile_scene: PackedScene = preload("res://Scenes/projectile.tscn")
 @onready var spawned_nodes: Node = $SpawnedNodes
 @onready var network_ui: Panel = $NetworkUI
+@onready var username_input: LineEdit = $NetworkUI/VBoxContainer/UsernameInput
 
 # Local player info
 var local_username: String
+var guest_id: String
 
 func _ready() -> void:
+	# Load or create a local guest profile before connecting.
+	_load_or_create_profile()
 	start_client()
 
 func _process(_delta: float) -> void:
@@ -48,8 +54,13 @@ func start_client() -> void:
 func send_input(input_data: Dictionary) -> void:
 	if socket.get_ready_state() != WebSocketPeer.STATE_OPEN:
 		return
-		
-	var json_str = JSON.stringify(input_data)
+
+	# Wrap input in the structured message expected by the server.
+	var message = {
+		"type": "Input",
+		"data": input_data
+	}
+	var json_str = JSON.stringify(message)
 	socket.send_text(json_str)
 
 func _handle_server_message(json_str: String) -> void:
@@ -140,6 +151,7 @@ func _handle_world_update(data: Dictionary) -> void:
 func _connected_to_server() -> void:
 	print("Connected to server")
 	network_ui.visible = false
+	_send_join()
 
 # Client fn
 func _connection_failed() -> void:
@@ -153,3 +165,68 @@ func _server_closed() -> void:
 
 func _on_username_input_text_changed(new_text: String) -> void:
 	local_username = new_text
+	_save_profile()
+
+func _send_join() -> void:
+	if socket.get_ready_state() != WebSocketPeer.STATE_OPEN:
+		return
+
+	# Send a minimal guest join payload for persistence.
+	var message = {
+		"type": "Join",
+		"data": {
+			"guest_id": guest_id,
+			"display_name": local_username
+		}
+	}
+	var json_str = JSON.stringify(message)
+	socket.send_text(json_str)
+
+func _load_or_create_profile() -> void:
+	var data: Dictionary = {}
+
+	if FileAccess.file_exists(PROFILE_PATH):
+		var file = FileAccess.open(PROFILE_PATH, FileAccess.READ)
+		if file:
+			var text = file.get_as_text()
+			file.close()
+			var parsed = JSON.parse_string(text)
+			if typeof(parsed) == TYPE_DICTIONARY:
+				data = parsed
+
+	if data.has("guest_id"):
+		guest_id = str(data.guest_id)
+	else:
+		guest_id = _generate_guest_id()
+
+	if data.has("display_name"):
+		local_username = str(data.display_name)
+	else:
+		local_username = DEFAULT_DISPLAY_NAME
+
+	username_input.text = local_username
+	_save_profile()
+
+func _save_profile() -> void:
+	var file = FileAccess.open(PROFILE_PATH, FileAccess.WRITE)
+	if not file:
+		return
+
+	# Persist a minimal guest profile for future sessions.
+	var data = {
+		"guest_id": guest_id,
+		"display_name": local_username
+	}
+	file.store_string(JSON.stringify(data))
+	file.close()
+
+func _generate_guest_id() -> String:
+	var rng = RandomNumberGenerator.new()
+	rng.randomize()
+	var parts: Array = []
+
+	# Generate a 128-bit hex string with four 32-bit chunks.
+	for i in range(4):
+		parts.append("%08x" % rng.randi())
+
+	return "".join(parts)
