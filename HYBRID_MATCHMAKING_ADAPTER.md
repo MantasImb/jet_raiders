@@ -34,7 +34,7 @@ routes the socket to the lobby returned by the provider.
 
 ## Data Types (Protocol and Domain)
 
-Add these to `server/src/protocol.rs`:
+Add these to `game_server/src/protocol.rs`:
 
 ```rust
 // Wire message for requesting random assignment.
@@ -46,7 +46,7 @@ pub enum ClientMessage {
 }
 ```
 
-Add these to `server/src/lobby.rs` or a new `matchmaking.rs` module:
+Add these to `game_server/src/lobby.rs` or a new `matchmaking.rs` module:
 
 ```rust
 // Domain-level response used by the lobby manager and net adapter.
@@ -201,13 +201,13 @@ and return the assigned `lobby_id`. The rest of the server stays unchanged.
 
 ## Files to Touch
 
-- `server/src/protocol.rs`: add `JoinRandom`.
-- `server/src/lobby.rs`: add `LobbyManager`, `LobbyHandle`, and optional
+- `game_server/src/protocol.rs`: add `JoinRandom`.
+- `game_server/src/lobby.rs`: add `LobbyManager`, `LobbyHandle`, and optional
   matchmaking trait if you keep it there.
-- `server/src/net.rs`: call the matchmaker and lobby manager during handshake.
-- `server/src/main.rs`: construct the matchmaker and lobby manager and pass
+- `game_server/src/net.rs`: call the matchmaker and lobby manager during handshake.
+- `game_server/src/main.rs`: construct the matchmaker and lobby manager and pass
   them into `AppState`.
-- `server/src/app_state.rs`: store shared references to the manager and provider.
+- `game_server/src/app_state.rs`: store shared references to the manager and provider.
 
 ## Testing Considerations
 

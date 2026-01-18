@@ -25,8 +25,8 @@ The design is intentionally based on widely adopted production patterns in Rust:
 
 Tracing is an *outer-layer concern*.
 
-- ✅ Allowed: `server/src/main.rs`, `server/src/net.rs`, `server/src/game.rs`
-- 🚫 Avoid in domain: `server/src/state.rs`, `server/src/systems/*`
+- ✅ Allowed: `game_server/src/main.rs`, `game_server/src/net.rs`, `game_server/src/game.rs`
+- 🚫 Avoid in domain: `game_server/src/state.rs`, `game_server/src/systems/*`
 
 Rule: domain code should not be forced to depend on a logging framework.
 
@@ -34,7 +34,7 @@ Rule: domain code should not be forced to depend on a logging framework.
 
 ### 1) Subscriber initialization (bootstrap)
 
-File: `server/src/main.rs`
+File: `game_server/src/main.rs`
 
 Principles:
 
@@ -75,7 +75,7 @@ fn init_tracing() {
 
 ### 2) Connection lifecycle spans (network adapter)
 
-File: `server/src/net.rs`
+File: `game_server/src/net.rs`
 
 Principles:
 
@@ -103,7 +103,7 @@ Errors should log:
 
 ### 3) World task events (game loop)
 
-File: `server/src/game.rs`
+File: `game_server/src/game.rs`
 
 Principles:
 
@@ -162,7 +162,7 @@ tracing::info!(player_id, "client disconnected");
 
 ### No tracing setup outside bootstrap
 
-- No `tracing_subscriber` usage outside `server/src/main.rs`.
+- No `tracing_subscriber` usage outside `game_server/src/main.rs`.
 
 ## Operational usage
 

@@ -16,14 +16,14 @@ This happens 60 times a second. That is **6,000 serializations/sec** for the exa
 
 ## 2. Where it happens in the code
 
-The issue lies in how `server/src/net.rs` connects the Game Loop to the Client Loop.
+The issue lies in how `game_server/src/net.rs` connects the Game Loop to the Client Loop.
 
 ### The Isolation
 
 The function `run_client_loop` runs independently for every connection.
 
 ```rust
-// server/src/net.rs
+// game_server/src/net.rs
 async fn run_client_loop(...) {
     loop {
         // ...
@@ -36,7 +36,7 @@ async fn run_client_loop(...) {
 Inside that loop, every client listens to the broadcast channel individually:
 
 ```rust
-// server/src/net.rs
+// game_server/src/net.rs
 world_msg = world_rx.recv() => { ... }
 ```
 
@@ -47,7 +47,7 @@ The `world_rx` channel broadcasts the **Source Data** (`WorldUpdate` struct), no
 Because each client receives the raw struct, each client must handle the conversion to text/bytes privately:
 
 ```rust
-// server/src/net.rs (inside send_message)
+// game_server/src/net.rs (inside send_message)
 let txt = serde_json::to_string(msg)?; // <-- EXECUTES N TIMES
 ```
 
