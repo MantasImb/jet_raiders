@@ -470,10 +470,12 @@ async fn handle_incoming_ws(
                         // Join is the only time we persist guest profile data.
                         let guest = payload.guest_id.trim();
                         if guest.is_empty() || guest.len() > MAX_GUEST_ID_LEN {
-                            if should_log(last_invalid_input_log) {
-                                warn!(player_id, "invalid guest_id on join");
-                            }
-                            return Ok(LoopControl::Continue);
+                            warn!(player_id, "invalid guest_id on join; disconnecting");
+                            *close_frame = Some(CloseFrame {
+                                code: close_code::POLICY,
+                                reason: "invalid guest_id".into(),
+                            });
+                            return Ok(LoopControl::Disconnect);
                         }
 
                         let mut name = payload.display_name.trim();

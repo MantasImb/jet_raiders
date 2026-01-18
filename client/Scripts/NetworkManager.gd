@@ -147,17 +147,14 @@ func _handle_world_update(data: Dictionary) -> void:
 			if node.projectile_id not in current_projectile_ids:
 				node.queue_free()
 
-# Client fn
 func _connected_to_server() -> void:
 	print("Connected to server")
 	network_ui.visible = false
 	_send_join()
 
-# Client fn
 func _connection_failed() -> void:
 	print("Connection failed")
 
-# Client fn
 func _server_closed() -> void:
 	print("Server has been closed")
 	network_ui.visible = true
