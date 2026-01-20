@@ -7,12 +7,14 @@
 
 tmux send-keys -t neovim 'nvim .' C-m
 # `exec zsh` needs to be added because otherwise the shell will exit when the command finishes.
-tmux neww -n "client" -c 'client/' 'nvim .; exec zsh'
-tmux neww -n "server" -c 'server/' 'nvim .; exec zsh'
-tmux neww -n "agent" 'copilot; exec zsh'
-tmux neww -n "watch" -c ./server
-# sending keys so that i can just press enter to start watching, but can also clear the terminal if needed (for example if i want to add a crate)
-tmux send-keys -t watch 'cargo watch -x check -x run'
+tmux neww -n "agent" 'codex; exec zsh'
 tmux neww -n "terminal" 'git status; exec zsh'
+tmux neww -n "client" -c 'game_client/' 'nvim .; exec zsh'
+tmux neww -n "web" -c 'website/' 'nvim .; exec zsh'
+tmux neww -n "game_server" -c 'game_server/' 'nvim .; exec zsh'
+tmux neww -n "head_server" -c 'head_server/' 'nvim .; exec zsh'
+tmux neww -n "auth" -c 'auth_server/' 'nvim .; exec zsh'
+tmux neww -n "mm" -c 'matchmaking_server/' 'nvim .; exec zsh'
+# sending keys so that i can just press enter to start watching, but can also clear the terminal if needed (for example if i want to add a crate)
 # The first window is always named neovim. We switch to it.
 tmux select-window -t neovim
