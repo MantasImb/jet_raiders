@@ -1,6 +1,0 @@
-- [ ] Implement the separate world tasks so that each lobby has its own task.
-- [ ] User names shown in client.
-- [ ] Matchmaking microservice.
-- [ ] Head server.
-- [ ] Auth server.
-- [ ] Win condition.
