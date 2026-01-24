@@ -12,7 +12,7 @@ state received from the server.
 
 ```mermaid
 graph TD
-    Client[Game Client (Godot)] -->|HTTPS| Website[Website + Launcher]
+    Client[Game Client Godot] -->|HTTPS| Website[Website + Launcher]
     Website -->|HTTPS| Head[Head Service]
     Head -->|HTTPS| Auth[Auth Service]
     Head -->|HTTPS| Matchmaking[Matchmaking Service]
