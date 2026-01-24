@@ -3,58 +3,40 @@ version: "0.5"
 processes:
   auth-server:
     # Rust auth service with auto-restart on local file changes.
-    command: cargo run
+    command: cargo watch -x check -x run
     working_dir: auth_server
     availability:
       restart: always
-    watch:
-      - path: ./auth_server/src
-        action: restart
-      - path: ./auth_server/Cargo.toml
-        action: restart
-      - path: ./auth_server/Cargo.lock
-        action: restart
 
   game-server:
     # Rust game server with auto-restart on local file changes.
-    command: cargo run
+    command: cargo watch -x check -x run
     working_dir: game_server
     availability:
       restart: always
-    watch:
-      - path: ./game_server/src
-        action: restart
-      - path: ./game_server/Cargo.toml
-        action: restart
-      - path: ./game_server/Cargo.lock
-        action: restart
 
   head-server:
-    # Placeholder until the head service has a runnable binary.
-    command: bash -lc "echo 'Head service not implemented yet.' && sleep infinity"
+    command: cargo watch -x check -x run
     working_dir: head_server
     availability:
       restart: always
-    watch:
-      - path: ./head_server
-        action: restart
 
-  matchmaking-server:
-    # Placeholder until the matchmaking service has a runnable binary.
-    command: bash -lc "echo 'Matchmaking service not implemented yet.' && sleep infinity"
-    working_dir: matchmaking_server
-    availability:
-      restart: always
-    watch:
-      - path: ./matchmaking_server
-        action: restart
-
-  website:
-    # Placeholder until the website has a runnable dev server.
-    command: bash -lc "echo 'Website service not implemented yet.' && sleep infinity"
-    working_dir: website
-    availability:
-      restart: always
-    watch:
-      - path: ./website
-        action: restart
+  # matchmaking-server:
+  #   # Placeholder until the matchmaking service has a runnable binary.
+  #   command: bash -lc "echo 'Matchmaking service not implemented yet.' && sleep infinity"
+  #   working_dir: matchmaking_server
+  #   availability:
+  #     restart: always
+  #   watch:
+  #     - path: ./matchmaking_server
+  #       action: restart
+  #
+  # website:
+  #   # Placeholder until the website has a runnable dev server.
+  #   command: bash -lc "echo 'Website service not implemented yet.' && sleep infinity"
+  #   working_dir: website
+  #   availability:
+  #     restart: always
+  #   watch:
+  #     - path: ./website
+  #       action: restart

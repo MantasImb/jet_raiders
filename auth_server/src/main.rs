@@ -8,8 +8,35 @@ use uuid::Uuid;
 // Basic session lifetime for guest tokens (in seconds).
 const GUEST_SESSION_TTL_SECONDS: u64 = 60 * 60;
 
+fn init_tracing() {
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+
+    let json = matches!(std::env::var("LOG_FORMAT").as_deref(), Ok("json"));
+    if json {
+        tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_target(false)
+            .json()
+            .with_current_span(true)
+            .init();
+    } else {
+        tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_target(false)
+            .compact()
+            .init();
+    }
+
+    std::panic::set_hook(Box::new(|info| {
+        let backtrace = std::backtrace::Backtrace::capture();
+        tracing::error!(%info, ?backtrace, "panic");
+    }));
+}
+
 #[tokio::main]
 async fn main() {
+    init_tracing();
     // Shared, in-memory store for guest sessions.
     let state = AppState {
         sessions: Arc::new(Mutex::new(HashMap::new())),
@@ -22,19 +49,20 @@ async fn main() {
         .route("/auth/logout", post(logout))
         .with_state(state);
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], 3001));
+    let addr = SocketAddr::from(([0, 0, 0, 0], 3002));
 
     let listener = match tokio::net::TcpListener::bind(addr).await {
         Ok(l) => l,
         Err(e) => {
-            println!("Failed to bind to address {}: {}", addr, e);
+            tracing::error!("Failed to bind to address {}: {}", addr, e);
             std::process::exit(1);
         }
     };
+    tracing::info!(%addr, "listening");
 
-    axum::serve(listener, app)
-        .await
-        .expect("auth server failed");
+    if let Err(e) = axum::serve(listener, app).await {
+        tracing::error!(error = %e, "server error");
+    }
 }
 
 // Application state holding session storage.

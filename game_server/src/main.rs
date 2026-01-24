@@ -1,8 +1,8 @@
 mod app_state;
 mod config;
 mod db;
-mod guest;
 mod game;
+mod guest;
 mod lobby;
 mod net;
 mod protocol;
@@ -120,7 +120,7 @@ async fn main() {
         .route("/ws", get(ws_handler))
         .with_state(state);
 
-    let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
+    let addr = SocketAddr::from(([127, 0, 0, 1], 3001));
     tracing::info!(%addr, "listening");
 
     // Bind TCP listener with error handling
