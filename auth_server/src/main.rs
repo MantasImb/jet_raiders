@@ -1,9 +1,4 @@
-use axum::{
-    extract::State,
-    http::StatusCode,
-    routing::post,
-    Json, Router,
-};
+use axum::{extract::State, http::StatusCode, routing::post, Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::SystemTime};
@@ -27,10 +22,17 @@ async fn main() {
         .route("/auth/logout", post(logout))
         .with_state(state);
 
-    // Bind and serve the Axum application.
     let addr = SocketAddr::from(([0, 0, 0, 0], 3001));
-    axum::Server::bind(&addr)
-        .serve(app.into_make_service())
+
+    let listener = match tokio::net::TcpListener::bind(addr).await {
+        Ok(l) => l,
+        Err(e) => {
+            println!("Failed to bind to address {}: {}", addr, e);
+            std::process::exit(1);
+        }
+    };
+
+    axum::serve(listener, app)
         .await
         .expect("auth server failed");
 }
@@ -132,22 +134,19 @@ async fn verify_token(
     let session = sessions.get(&payload.token).cloned();
 
     match session {
-        Some(session) if session.expires_at > current_epoch_seconds() => Ok(Json(
-            VerifyTokenResponse {
+        Some(session) if session.expires_at > current_epoch_seconds() => {
+            Ok(Json(VerifyTokenResponse {
                 guest_id: session.guest_id,
                 display_name: session.display_name,
                 metadata: session.metadata,
                 session_id: session.session_id,
                 expires_at: session.expires_at,
-            },
-        )),
+            }))
+        }
         Some(_) => {
             // Remove expired sessions to keep the store tidy.
             sessions.remove(&payload.token);
-            Err(error_response(
-                StatusCode::UNAUTHORIZED,
-                "session expired",
-            ))
+            Err(error_response(StatusCode::UNAUTHORIZED, "session expired"))
         }
         None => Err(error_response(
             StatusCode::UNAUTHORIZED,
@@ -175,10 +174,7 @@ struct ErrorResponse {
 }
 
 // Helper to build a JSON error response.
-fn error_response(
-    status: StatusCode,
-    message: &str,
-) -> (StatusCode, Json<ErrorResponse>) {
+fn error_response(status: StatusCode, message: &str) -> (StatusCode, Json<ErrorResponse>) {
     (
         status,
         Json(ErrorResponse {

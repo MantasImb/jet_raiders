@@ -1,3 +1,5 @@
 .gemini/
 gha-creds-*.json
 .obsidian/
+*/target/
+*/Cargo.lock
