@@ -1,4 +1,4 @@
-[gd_scene load_steps=186 format=4 uid="uid://duvhuuetjdgu7"]
+[gd_scene load_steps=188 format=4 uid="uid://duvhuuetjdgu7"]
 
 [ext_resource type="Script" uid="uid://b4axg7nkv0qk3" path="res://Scripts/GameManager.gd" id="1_87bhu"]
 [ext_resource type="Texture2D" uid="uid://bto3eqskf342v" path="res://Sprites/Tiles/tile_0100.png" id="1_ihvwq"]
@@ -91,6 +91,7 @@
 [ext_resource type="Texture2D" uid="uid://dbg55g7e5ng5m" path="res://Sprites/Clouds/Cloud_0.png" id="87_k8rh3"]
 [ext_resource type="Script" uid="uid://br80u7647q5wq" path="res://Scripts/NetworkManager.gd" id="88_55idt"]
 [ext_resource type="Script" uid="uid://rnaw88iwgch" path="res://Scripts/WeaponHeatBar.gd" id="90_33qc4"]
+[ext_resource type="Script" uid="uid://kr30aiofa8yp" path="res://Scripts/UserManager.gd" id="91_32dfi"]
 [ext_resource type="Script" uid="uid://b85i8rfk50pm2" path="res://Scripts/ScoreUI.gd" id="91_e6rcu"]
 
 [sub_resource type="Gradient" id="Gradient_7va32"]
@@ -522,6 +523,8 @@ sources/117 = SubResource("TileSetAtlasSource_obsuk")
 sources/118 = SubResource("TileSetAtlasSource_74dxy")
 sources/119 = SubResource("TileSetAtlasSource_6ben7")
 
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_cf2bd"]
+
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_e6rcu"]
 bg_color = Color(0.24115604, 0.24115607, 0.24115595, 1)
 
@@ -660,8 +663,10 @@ tile_set = SubResource("TileSet_k7w2v")
 [node name="Network" type="Node" parent="."]
 script = ExtResource("88_55idt")
 
+[node name="UserManager" type="Node" parent="Network"]
+script = ExtResource("91_32dfi")
+
 [node name="NetworkUI" type="Panel" parent="Network"]
-visible = false
 z_index = 99
 offset_left = -160.0
 offset_top = -120.0
@@ -678,6 +683,11 @@ offset_bottom = 180.0
 [node name="UsernameInput" type="LineEdit" parent="Network/NetworkUI/VBoxContainer"]
 layout_mode = 2
 placeholder_text = "Username..."
+
+[node name="MenuButton" type="MenuButton" parent="Network/NetworkUI/VBoxContainer"]
+layout_mode = 2
+theme_override_styles/normal = SubResource("StyleBoxFlat_cf2bd")
+text = "Look for match"
 
 [node name="SpawnedNodes" type="Node" parent="Network"]
 
@@ -748,4 +758,5 @@ label_settings = SubResource("LabelSettings_cf2bd")
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[connection signal="text_changed" from="Network/NetworkUI/VBoxContainer/UsernameInput" to="Network" method="_on_username_input_text_changed"]
+[connection signal="text_changed" from="Network/NetworkUI/VBoxContainer/UsernameInput" to="Network/UserManager" method="_on_username_input_text_changed"]
+[connection signal="pressed" from="Network/NetworkUI/VBoxContainer/MenuButton" to="Network/UserManager" method="login"]

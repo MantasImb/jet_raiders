@@ -1,32 +1,32 @@
 extends Node
 class_name NetworkManager
 
-const SOCKET_URL = "ws://127.0.0.1:3000/ws"
-const PROFILE_PATH = "user://guest_profile.json"
-const DEFAULT_DISPLAY_NAME = "Pilot"
+var user: UserManager
 
-var socket: WebSocketPeer = WebSocketPeer.new()
+const HEAD_BASE_URL= "http://127.0.0.1:3000"
+# will be assigned when the head server provides the game server URL
+var game_server_url: String
+var lobby_id: String
+
+var game_socket: WebSocketPeer = WebSocketPeer.new()
 var connected: bool = false
-var local_player_id: int = 0
 
 var player_scene: PackedScene = preload("res://Scenes/player.tscn")
 var projectile_scene: PackedScene = preload("res://Scenes/projectile.tscn")
 @onready var spawned_nodes: Node = $SpawnedNodes
 @onready var network_ui: Panel = $NetworkUI
-@onready var username_input: LineEdit = $NetworkUI/VBoxContainer/UsernameInput
 
-# Local player info
-var local_username: String
-var guest_id: String
 
 func _ready() -> void:
+	pass
 	# Load or create a local guest profile before connecting.
-	_load_or_create_profile()
-	start_client()
-
+	#start_client()
+	
 func _process(_delta: float) -> void:
-	socket.poll()
-	var state = socket.get_ready_state()
+	return
+	
+	game_socket.poll()
+	var state = game_socket.get_ready_state()
 	
 	if state == WebSocketPeer.STATE_OPEN:
 		if not connected:
@@ -34,8 +34,8 @@ func _process(_delta: float) -> void:
 			_connected_to_server()
 		
 		# Process incoming packets
-		while socket.get_available_packet_count() > 0:
-			var packet = socket.get_packet()
+		while game_socket.get_available_packet_count() > 0:
+			var packet = game_socket.get_packet()
 			var data_str = packet.get_string_from_utf8()
 			_handle_server_message(data_str)
 			
@@ -45,14 +45,14 @@ func _process(_delta: float) -> void:
 			_server_closed()
 
 func start_client() -> void:
-	print("Connecting to %s..." % SOCKET_URL)
-	var err = socket.connect_to_url(SOCKET_URL)
+	print("Connecting to %s..." % game_server_url)
+	var err = game_socket.connect_to_url(game_server_url)
 	if err != OK:
 		print("Connection error: %s" % err)
 		_connection_failed()
 
 func send_input(input_data: Dictionary) -> void:
-	if socket.get_ready_state() != WebSocketPeer.STATE_OPEN:
+	if game_socket.get_ready_state() != WebSocketPeer.STATE_OPEN:
 		return
 
 	# Wrap input in the structured message expected by the server.
@@ -61,7 +61,7 @@ func send_input(input_data: Dictionary) -> void:
 		"data": input_data
 	}
 	var json_str = JSON.stringify(message)
-	socket.send_text(json_str)
+	game_socket.send_text(json_str)
 
 func _handle_server_message(json_str: String) -> void:
 	var json = JSON.new()
@@ -76,12 +76,6 @@ func _handle_server_message(json_str: String) -> void:
 		return
 
 	match msg.type:
-		"Identity":
-			# { "type": "Identity", "data": { "player_id": 123 } }
-			if msg.data.has("player_id"):
-				local_player_id = int(msg.data.player_id)
-				print("Assigned Player ID: ", local_player_id)
-				
 		"WorldUpdate":
 			# { "type": "WorldUpdate", "data": { "tick": 1, "entities": [...] } }
 			if msg.data.has("entities"):
@@ -160,70 +154,18 @@ func _server_closed() -> void:
 	network_ui.visible = true
 	spawned_nodes.get_children().map(func(n): n.queue_free())
 
-func _on_username_input_text_changed(new_text: String) -> void:
-	local_username = new_text
-	_save_profile()
 
 func _send_join() -> void:
-	if socket.get_ready_state() != WebSocketPeer.STATE_OPEN:
+	if game_socket.get_ready_state() != WebSocketPeer.STATE_OPEN:
 		return
 
 	# Send a minimal guest join payload for persistence.
 	var message = {
 		"type": "Join",
 		"data": {
-			"guest_id": guest_id,
-			"display_name": local_username
+			"guest_id": user.guest_id,
+			"display_name": user.local_username
 		}
 	}
 	var json_str = JSON.stringify(message)
-	socket.send_text(json_str)
-
-func _load_or_create_profile() -> void:
-	var data: Dictionary = {}
-
-	if FileAccess.file_exists(PROFILE_PATH):
-		var file = FileAccess.open(PROFILE_PATH, FileAccess.READ)
-		if file:
-			var text = file.get_as_text()
-			file.close()
-			var parsed = JSON.parse_string(text)
-			if typeof(parsed) == TYPE_DICTIONARY:
-				data = parsed
-
-	if data.has("guest_id"):
-		guest_id = str(data.guest_id)
-	else:
-		guest_id = _generate_guest_id()
-
-	if data.has("display_name"):
-		local_username = str(data.display_name)
-	else:
-		local_username = DEFAULT_DISPLAY_NAME
-
-	username_input.text = local_username
-	_save_profile()
-
-func _save_profile() -> void:
-	var file = FileAccess.open(PROFILE_PATH, FileAccess.WRITE)
-	if not file:
-		return
-
-	# Persist a minimal guest profile for future sessions.
-	var data = {
-		"guest_id": guest_id,
-		"display_name": local_username
-	}
-	file.store_string(JSON.stringify(data))
-	file.close()
-
-func _generate_guest_id() -> String:
-	var rng = RandomNumberGenerator.new()
-	rng.randomize()
-	var parts: Array = []
-
-	# Generate a 128-bit hex string with four 32-bit chunks.
-	for i in range(4):
-		parts.append("%08x" % rng.randi())
-
-	return "".join(parts)
+	game_socket.send_text(json_str)

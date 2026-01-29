@@ -23,3 +23,5 @@ sqlx = { version = "0.8.6", features = [
   "macros",
   "migrate",
 ] }
+reqwest = { version = "0.13.1", features = ["json"] }
+async-trait = "0.1.89"

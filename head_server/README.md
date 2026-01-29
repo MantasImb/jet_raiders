@@ -1,5 +1,15 @@
 # Head Service
 
+```mermaid
+flowchart TD
+    F[Frameworks - server.rs] --> R[Interface Adapters - routes.rs]
+    R --> H[Interface Adapters - handlers/*]
+    H --> S[Interface Adapters - state.rs]
+    S --> D[Domain - auth.rs - AuthProvider]
+    H --> C[Interface Adapters - clients.rs - AuthClient]
+    C --> D
+```
+
 ## Purpose
 
 The head service is the front door for the Jet Raiders platform. It serves the
@@ -57,10 +67,9 @@ bypass the head service for a specific flow.
 
 - `user_id`: canonical user ID.
 - `display_name`: player-facing name.
-- `avatar_url`: optional avatar asset.
 - `created_at`: account creation time.
 
-### Party State
+### Party State (future)
 
 - `party_id`: unique party identifier.
 - `leader_id`: current party leader.
