@@ -3,11 +3,17 @@ use crate::interface_adapters::protocol::{
     ErrorResponse, GuestLoginRequest, GuestLoginResponse, LogoutRequest, LogoutResponse,
     VerifyTokenRequest, VerifyTokenResponse,
 };
-use crate::interface_adapters::state::{AppState, InMemorySessionStore, SystemClock};
+use crate::interface_adapters::state::{
+    AppState,
+    InMemorySessionStore,
+    PostgresGuestProfileStore,
+    SystemClock,
+};
 use crate::use_cases::guest_login::GuestLoginUseCase;
 use crate::use_cases::logout::LogoutUseCase;
 use crate::use_cases::verify_token::VerifyTokenUseCase;
 use axum::{extract::State, http::StatusCode, Json};
+use tracing::warn;
 
 // Basic session lifetime for guest tokens (in seconds).
 const GUEST_SESSION_TTL_SECONDS: u64 = 60 * 60;
@@ -17,6 +23,15 @@ pub async fn guest_login(
     State(state): State<AppState>,
     Json(payload): Json<GuestLoginRequest>,
 ) -> Result<Json<GuestLoginResponse>, (StatusCode, Json<ErrorResponse>)> {
+    // Capture guest identity fields before moving the payload into the use case.
+    let guest_id = payload.guest_id.clone();
+    let display_name = payload.display_name.clone();
+    let metadata_json = payload
+        .metadata
+        .as_ref()
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "{}".to_string());
+
     let store = InMemorySessionStore {
         sessions: state.sessions.clone(),
     };
@@ -30,6 +45,17 @@ pub async fn guest_login(
         .execute(payload)
         .await
         .map_err(|err| map_auth_error(err, AuthErrorContext::GuestLogin))?;
+
+    // Best-effort persistence of the guest profile for downstream services.
+    let profile_store = PostgresGuestProfileStore {
+        db: state.db.clone(),
+    };
+    if let Err(err) = profile_store
+        .upsert_guest_profile(&guest_id, &display_name, &metadata_json)
+        .await
+    {
+        warn!(error = %err, "failed to upsert guest profile");
+    }
 
     Ok(Json(GuestLoginResponse {
         token: result.token,

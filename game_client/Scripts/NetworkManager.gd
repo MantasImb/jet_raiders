@@ -1,12 +1,15 @@
 extends Node
 class_name NetworkManager
 
-var user: UserManager
+@onready var user: UserManager = $UserManager
+@onready var game_manager: GameManager = $"../GameManager"
 
 const HEAD_BASE_URL= "http://127.0.0.1:3000"
+const TEST_SERVER_URL= "ws://127.0.0.1:3001/ws"
 # will be assigned when the head server provides the game server URL
 var game_server_url: String
 var lobby_id: String
+var local_player_id: int
 
 var game_socket: WebSocketPeer = WebSocketPeer.new()
 var connected: bool = false
@@ -16,15 +19,12 @@ var projectile_scene: PackedScene = preload("res://Scenes/projectile.tscn")
 @onready var spawned_nodes: Node = $SpawnedNodes
 @onready var network_ui: Panel = $NetworkUI
 
-
 func _ready() -> void:
-	pass
 	# Load or create a local guest profile before connecting.
-	#start_client()
+	if game_manager.TEST_MODE:
+		start_client(TEST_SERVER_URL)
 	
 func _process(_delta: float) -> void:
-	return
-	
 	game_socket.poll()
 	var state = game_socket.get_ready_state()
 	
@@ -44,12 +44,15 @@ func _process(_delta: float) -> void:
 			connected = false
 			_server_closed()
 
-func start_client() -> void:
-	print("Connecting to %s..." % game_server_url)
-	var err = game_socket.connect_to_url(game_server_url)
+func start_client(url: String) -> void:
+	print("Connecting to %s..." % url)
+	var err = game_socket.connect_to_url(url)
 	if err != OK:
 		print("Connection error: %s" % err)
 		_connection_failed()
+
+func join_test_lobby() -> void:
+	start_client(TEST_SERVER_URL)
 
 func send_input(input_data: Dictionary) -> void:
 	if game_socket.get_ready_state() != WebSocketPeer.STATE_OPEN:
@@ -76,6 +79,11 @@ func _handle_server_message(json_str: String) -> void:
 		return
 
 	match msg.type:
+		"Identity":
+			# { "type": "Identity", "data": { "player_id": 123 } }
+			if msg.data.has("player_id"):
+				local_player_id = int(msg.data.player_id)
+				print("Assigned Player ID: ", local_player_id)
 		"WorldUpdate":
 			# { "type": "WorldUpdate", "data": { "tick": 1, "entities": [...] } }
 			if msg.data.has("entities"):
@@ -158,7 +166,7 @@ func _server_closed() -> void:
 func _send_join() -> void:
 	if game_socket.get_ready_state() != WebSocketPeer.STATE_OPEN:
 		return
-
+	
 	# Send a minimal guest join payload for persistence.
 	var message = {
 		"type": "Join",

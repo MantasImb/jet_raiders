@@ -1,6 +1,8 @@
 extends Node
 class_name GameManager
 
+const TEST_MODE: bool = true
+
 var players: Array[Player]
 var local_player: Player
 var score_to_win: int = 3

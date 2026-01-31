@@ -1,3 +1,4 @@
+use crate::frameworks::db;
 use crate::interface_adapters::routes::app;
 use crate::interface_adapters::state::AppState;
 use std::collections::HashMap;
@@ -32,10 +33,35 @@ fn init_tracing() {
 }
 
 pub async fn run() {
+    // Load .env locally; safe to ignore when not present.
+    let _ = dotenvy::dotenv();
     init_tracing();
+    // Load database configuration from the environment.
+    let database_url = match std::env::var("DATABASE_URL") {
+        Ok(value) => value,
+        Err(_) => {
+            tracing::error!("DATABASE_URL must be set");
+            return;
+        }
+    };
+
+    // Connect to Postgres and run migrations on startup.
+    let db = match db::connect_pool(&database_url).await {
+        Ok(pool) => pool,
+        Err(e) => {
+            tracing::error!(error = %e, "failed to connect to database");
+            return;
+        }
+    };
+    if let Err(e) = db::run_migrations(&db).await {
+        tracing::error!(error = %e, "failed to run migrations");
+        return;
+    }
+
     // Shared, in-memory store for guest sessions.
     let state = AppState {
         sessions: Arc::new(Mutex::new(HashMap::new())),
+        db,
     };
 
     // Wire routes for the guest-only auth flow.

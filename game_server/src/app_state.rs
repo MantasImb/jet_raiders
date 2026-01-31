@@ -1,7 +1,6 @@
 use crate::protocol::{GameEvent, WorldUpdate};
 use crate::state::ServerState;
 use axum::extract::ws::Utf8Bytes;
-use sqlx::PgPool;
 use tokio::sync::{broadcast, mpsc, watch};
 
 #[derive(Clone)]
@@ -16,6 +15,4 @@ pub struct AppState {
     pub world_latest_tx: watch::Sender<Utf8Bytes>,
     // High-level server state (lobby/match).
     pub server_state_tx: watch::Sender<ServerState>,
-    // Shared database pool for persistence.
-    pub db: PgPool,
 }

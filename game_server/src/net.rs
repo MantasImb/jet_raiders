@@ -1,5 +1,4 @@
 use crate::app_state::AppState;
-use crate::guest;
 use crate::protocol::{ClientMessage, GameEvent, PlayerInput, ServerMessage, WorldUpdate};
 use crate::state::ServerState;
 use crate::utils::rng::rand_id;
@@ -13,7 +12,6 @@ use axum::{
     response::IntoResponse,
 };
 use futures::SinkExt;
-use sqlx::PgPool;
 use std::{
     sync::Arc,
     time::{Duration, Instant},
@@ -91,7 +89,7 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
     let span = info_span!("conn", conn_id, player_id = tracing::field::Empty);
     let _enter = span.enter();
 
-    let mut ctx = match bootstrap_connection(&mut socket, &state, state.db.clone()).await {
+    let mut ctx = match bootstrap_connection(&mut socket, &state).await {
         Ok(ctx) => ctx,
         Err(e) => {
             error!(error = ?e, "failed to bootstrap connection");
@@ -133,7 +131,6 @@ struct ConnCtx {
     pub world_bytes_rx: broadcast::Receiver<Utf8Bytes>,
     pub world_latest_rx: watch::Receiver<Utf8Bytes>,
     pub server_state_rx: watch::Receiver<ServerState>,
-    pub db: PgPool,
     pub guest_id: Option<String>,
     pub display_name: Option<String>,
     pub has_joined: bool,
@@ -157,7 +154,6 @@ struct ConnCtx {
 async fn bootstrap_connection(
     socket: &mut WebSocket,
     state: &AppState,
-    db: PgPool,
 ) -> Result<ConnCtx, NetError> {
     // Subscribe to updates *before* doing anything else (awaits) to not miss packets.
     let world_bytes_rx = state.world_bytes_tx.subscribe();
@@ -205,7 +201,6 @@ async fn bootstrap_connection(
         world_latest_rx,
         server_state_rx,
         input_tx: state.input_tx.clone(),
-        db,
         guest_id: None,
         display_name: None,
         has_joined: false,
@@ -293,7 +288,6 @@ async fn run_client_loop(socket: &mut WebSocket, ctx: &mut ConnCtx) -> Result<()
         world_bytes_rx,
         world_latest_rx,
         server_state_rx,
-        db,
         guest_id,
         display_name,
         has_joined,
@@ -322,7 +316,6 @@ async fn run_client_loop(socket: &mut WebSocket, ctx: &mut ConnCtx) -> Result<()
                     incoming,
                     player_id,
                     input_tx,
-                    db,
                     guest_id,
                     display_name,
                     has_joined,
@@ -448,7 +441,6 @@ async fn handle_incoming_ws(
     incoming: Option<Result<Message, Error>>,
     player_id: u64,
     input_tx: &mpsc::Sender<GameEvent>,
-    db: &PgPool,
     guest_id: &mut Option<String>,
     display_name: &mut Option<String>,
     has_joined: &mut bool,
@@ -467,34 +459,34 @@ async fn handle_incoming_ws(
 
                 match serde_json::from_str::<ClientMessage>(&text) {
                     Ok(ClientMessage::Join(payload)) => {
-                        // Join is the only time we persist guest profile data.
+                        // Join is the only time we accept identity metadata for a connection.
                         let guest = payload.guest_id.trim();
-                        if guest.is_empty() || guest.len() > MAX_GUEST_ID_LEN {
-                            warn!(player_id, "invalid guest_id on join; disconnecting");
-                            *close_frame = Some(CloseFrame {
-                                code: close_code::POLICY,
-                                reason: "invalid guest_id".into(),
-                            });
-                            return Ok(LoopControl::Disconnect);
-                        }
+                        let guest_value = if guest.is_empty() || guest.len() > MAX_GUEST_ID_LEN {
+                            // Keep join non-fatal; auth is handled by upstream services.
+                            if should_log(last_invalid_input_log) {
+                                warn!(player_id, "invalid guest_id on join; ignoring");
+                            }
+                            None
+                        } else {
+                            Some(guest.to_string())
+                        };
 
                         let mut name = payload.display_name.trim();
                         if name.is_empty() {
                             name = DEFAULT_DISPLAY_NAME;
                         }
-                        if name.len() > MAX_DISPLAY_NAME_LEN {
+                        let name_value = if name.len() > MAX_DISPLAY_NAME_LEN {
+                            // Avoid disconnecting on oversized names; fall back to default.
                             if should_log(last_invalid_input_log) {
-                                warn!(player_id, "display name too long; ignoring");
+                                warn!(player_id, "display name too long; defaulting");
                             }
-                            return Ok(LoopControl::Continue);
-                        }
+                            Some(DEFAULT_DISPLAY_NAME.to_string())
+                        } else {
+                            Some(name.to_string())
+                        };
 
-                        if let Err(e) = guest::upsert_guest(db, guest, name, "{}").await {
-                            warn!(player_id, error = %e, "failed to upsert guest profile");
-                        }
-
-                        *guest_id = Some(guest.to_string());
-                        *display_name = Some(name.to_string());
+                        *guest_id = guest_value;
+                        *display_name = name_value;
                         *has_joined = true;
                         Ok(LoopControl::Continue)
                     }

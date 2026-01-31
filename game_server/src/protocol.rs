@@ -19,7 +19,7 @@ pub enum ServerMessage {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type", content = "data")]
 pub enum ClientMessage {
-    // Initial handshake message with guest identity data.
+    // Initial handshake message with identity metadata.
     Join(JoinPayload),
     // Input messages sent after a successful Join.
     Input(PlayerInput),

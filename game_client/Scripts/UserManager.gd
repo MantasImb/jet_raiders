@@ -11,7 +11,7 @@ var auth_token: String
 
 # Local player info
 var local_username: String
-var guest_id: String
+var guest_id: String = "0"
 
 @onready var username_input: LineEdit = $"../NetworkUI/VBoxContainer/UsernameInput"
 

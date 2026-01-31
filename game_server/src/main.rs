@@ -1,8 +1,6 @@
 mod app_state;
 mod config;
-mod db;
 mod game;
-mod guest;
 mod lobby;
 mod net;
 mod protocol;
@@ -16,13 +14,10 @@ use crate::game::world_task;
 use crate::net::ws_handler;
 use crate::protocol::{GameEvent, WorldUpdate};
 use crate::state::ServerState;
-use sqlx::migrate::Migrator;
 
 use axum::{Router, extract::ws::Utf8Bytes, routing::get};
 use std::{net::SocketAddr, sync::Arc};
 use tokio::sync::{broadcast, mpsc, watch};
-
-static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 
 fn init_tracing() {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
@@ -70,34 +65,12 @@ async fn main() {
     // server_state_tx: High-level state (Lobby, MatchRunning) changes.
     let (server_state_tx, _server_state_rx) = watch::channel::<ServerState>(ServerState::Lobby);
 
-    let database_url = match std::env::var("DATABASE_URL") {
-        Ok(value) => value,
-        Err(_) => {
-            tracing::error!("DATABASE_URL must be set");
-            return;
-        }
-    };
-
-    let db = match db::connect_pool(&database_url).await {
-        Ok(pool) => pool,
-        Err(e) => {
-            tracing::error!(error = %e, "failed to connect to database");
-            return;
-        }
-    };
-
-    if let Err(e) = MIGRATOR.run(&db).await {
-        tracing::error!(error = %e, "failed to run migrations");
-        return;
-    }
-
     let state = Arc::new(AppState {
         input_tx,
         world_tx,
         world_bytes_tx,
         world_latest_tx,
         server_state_tx,
-        db,
     });
 
     // Spawn the Game Loop (World Task)
