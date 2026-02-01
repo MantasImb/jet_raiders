@@ -26,14 +26,13 @@ pub fn build_ticket_id(player_id: &str) -> String {
     format!("ticket-{}-{}", current_epoch_seconds(), player_id)
 }
 
-// Build a simple match identifier.
+// Build a simple match identifier with deterministically ordered player IDs.
 pub fn build_match_id(player_id: &str, opponent_id: &str) -> String {
-    format!(
-        "match-{}-{}-{}",
-        current_epoch_seconds(),
-        player_id,
-        opponent_id
-    )
+    let mut ids = [player_id, opponent_id];
+    // Sort the player IDs alphabetically to keep the match ID stable.
+    ids.sort_unstable();
+
+    format!("match-{}-{}-{}", current_epoch_seconds(), ids[0], ids[1])
 }
 
 fn current_epoch_seconds() -> u64 {
