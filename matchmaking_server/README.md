@@ -2,16 +2,14 @@
 
 ## Purpose
 
-The matchmaking service groups players into matches, chooses an appropriate
-region/game server, and returns lobby assignments to clients.
+The matchmaking service groups players into matches based on simple queue rules
+and returns match results to the head service.
 
 ## Responsibilities
 
-- Accept matchmaking requests from authenticated clients.
-- Group players based on queue rules (region, skill, party size).
-- Select a target game server and lobby ID.
-- Issue a short-lived match ticket for the game server.
-- Emit match status updates to clients.
+- Accept matchmaking requests from clients via the head service.
+- Group players based on simple queue rules (region-only today).
+- Return an immediate response indicating whether a match was found.
 
 ## Queue Flow (Player -> Match -> Head Service)
 
@@ -38,30 +36,13 @@ leaving room for additional matchmaking rules later.
    either notify the client immediately (matched) or keep polling until a match
    is returned.
 
-## Current Axum Server Functionality to Extract
-
-- Shift the current direct `/ws` connection flow into a matchmaking-driven
-  assignment step so the game server only accepts connections with a lobby
-  assignment.
-- Move the "join before input" gatekeeping checks into matchmaking so the game
-  server receives pre-validated lobby members.
-
 ## External Interfaces
 
 ### HTTP API
 
 - `POST /matchmaking/queue`
-  - Enqueues a player or party for matchmaking.
-  - Returns a queue ticket.
-- `POST /matchmaking/status`
-  - Returns queue status or match assignment.
-- `POST /matchmaking/cancel`
-  - Cancels an active queue ticket.
-
-### WebSocket (Optional)
-
-- `/matchmaking/ws`
-  - Real-time updates for queue position and match assignment.
+  - Enqueues a player for matchmaking.
+  - Returns a queue ticket or match assignment.
 
 ## Data Contracts
 
@@ -81,18 +62,14 @@ leaving room for additional matchmaking rules later.
 
 ## Security Considerations
 
-- Validate session tokens with the auth service.
-- Keep match tickets short-lived and single-use.
+- Authenticate requests at the head service before calling matchmaking.
 - Avoid leaking internal server addresses to unauthenticated clients.
 
 ## Dependencies
 
-- Auth service for token validation.
-- Game server registry or allocator.
-- Data store for queue state and rules.
+- Head service for client entry and validation.
+- In-memory queue storage (current implementation).
 
 ## Observability
 
-- Track queue wait times by region.
-- Log match assignments with correlation IDs.
-- Alert on allocation failures or capacity issues.
+- Log queue activity and match assignments with correlation IDs.
