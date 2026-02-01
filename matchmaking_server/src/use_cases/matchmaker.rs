@@ -13,6 +13,12 @@ pub enum MatchOutcome {
     },
 }
 
+// Errors that can occur while enqueueing a player.
+#[derive(Debug)]
+pub enum MatchError {
+    AlreadyQueued { player_id: String },
+}
+
 // In-memory matchmaker that pairs players based on region.
 #[derive(Debug, Default)]
 pub struct Matchmaker {
@@ -28,8 +34,18 @@ impl Matchmaker {
     }
 
     // Enqueue a player and attempt to find a match immediately.
-    pub fn enqueue(&mut self, request: QueueRequest) -> MatchOutcome {
+    pub fn enqueue(&mut self, request: QueueRequest) -> Result<MatchOutcome, MatchError> {
         // NOTE: player_skill is not used for matching yet (MVP implementation).
+        if self
+            .queue
+            .iter()
+            .any(|player| player.player_id == request.player_id)
+        {
+            return Err(MatchError::AlreadyQueued {
+                player_id: request.player_id,
+            });
+        }
+
         if let Some((index, opponent)) = self
             .queue
             .iter()
@@ -42,11 +58,11 @@ impl Matchmaker {
             // data structure that supports efficient arbitrary removals.
             self.queue.remove(index);
 
-            return MatchOutcome::Matched {
+            return Ok(MatchOutcome::Matched {
                 match_id: build_match_id(&request.player_id, &opponent.player_id),
                 opponent_id: opponent.player_id,
                 region: request.region,
-            };
+            });
         }
 
         let waiting_player = WaitingPlayer::new(
@@ -57,9 +73,9 @@ impl Matchmaker {
 
         self.queue.push_back(waiting_player);
 
-        MatchOutcome::Waiting {
+        Ok(MatchOutcome::Waiting {
             ticket_id: build_ticket_id(&request.player_id),
             region: request.region,
-        }
+        })
     }
 }

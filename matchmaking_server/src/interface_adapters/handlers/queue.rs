@@ -1,6 +1,6 @@
 use crate::interface_adapters::protocol::{ErrorResponse, QueueRequest, QueueResponse, QueueStatus};
 use crate::interface_adapters::state::AppState;
-use crate::use_cases::matchmaker::MatchOutcome;
+use crate::use_cases::matchmaker::{MatchError, MatchOutcome};
 use axum::{Json, extract::State, http::StatusCode};
 use std::sync::Arc;
 
@@ -24,24 +24,32 @@ pub async fn enqueue(
     };
 
     let response = match outcome {
-        MatchOutcome::Waiting { ticket_id, region } => QueueResponse {
+        Ok(MatchOutcome::Waiting { ticket_id, region }) => QueueResponse {
             status: QueueStatus::Waiting,
             ticket_id: Some(ticket_id),
             match_id: None,
             opponent_id: None,
             region,
         },
-        MatchOutcome::Matched {
+        Ok(MatchOutcome::Matched {
             match_id,
             opponent_id,
             region,
-        } => QueueResponse {
+        }) => QueueResponse {
             status: QueueStatus::Matched,
             ticket_id: None,
             match_id: Some(match_id),
             opponent_id: Some(opponent_id),
             region,
         },
+        Err(MatchError::AlreadyQueued { player_id }) => {
+            return Err((
+                StatusCode::CONFLICT,
+                Json(ErrorResponse {
+                    message: format!("player_id {} is already queued", player_id),
+                }),
+            ));
+        }
     };
 
     Ok(Json(response))
