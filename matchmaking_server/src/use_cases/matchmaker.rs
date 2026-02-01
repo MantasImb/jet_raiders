@@ -36,6 +36,9 @@ impl Matchmaker {
             .find(|(_, player)| player.region == request.region)
         {
             let opponent = opponent.clone();
+            // NOTE: VecDeque::remove(index) shifts elements after the index.
+            // For better performance at scale, consider per-region queues or a
+            // data structure that supports efficient arbitrary removals.
             self.queue.remove(index);
 
             return MatchOutcome::Matched {
