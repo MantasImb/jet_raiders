@@ -13,6 +13,14 @@ var local_player_id: int
 
 var game_socket: WebSocketPeer = WebSocketPeer.new()
 var connected: bool = false
+# Reconnect state is only used when TEST_MODE is enabled.
+var reconnect_attempts: int = 0
+var reconnect_timer: Timer
+var reconnect_scheduled: bool = false
+
+# Reconnect backoff settings (seconds).
+const RECONNECT_BASE_DELAY: float = 0.5
+const RECONNECT_MAX_DELAY: float = 6.0
 
 var player_scene: PackedScene = preload("res://Scenes/player.tscn")
 var projectile_scene: PackedScene = preload("res://Scenes/projectile.tscn")
@@ -20,6 +28,12 @@ var projectile_scene: PackedScene = preload("res://Scenes/projectile.tscn")
 @onready var network_ui: Panel = $NetworkUI
 
 func _ready() -> void:
+	# Use a timer so reconnect attempts don't hammer a restarting server.
+	reconnect_timer = Timer.new()
+	reconnect_timer.one_shot = true
+	reconnect_timer.timeout.connect(_on_reconnect_timeout)
+	add_child(reconnect_timer)
+	
 	# Load or create a local guest profile before connecting.
 	if game_manager.TEST_MODE:
 		start_client(TEST_SERVER_URL)
@@ -43,8 +57,12 @@ func _process(_delta: float) -> void:
 		if connected:
 			connected = false
 			_server_closed()
+		# Schedule reconnects in test mode when the server restarts.
+		_schedule_reconnect("socket closed")
 
 func start_client(url: String) -> void:
+	# Always reset the socket before connecting to avoid stale states.
+	_reset_socket()
 	print("Connecting to %s..." % url)
 	var err = game_socket.connect_to_url(url)
 	if err != OK:
@@ -152,15 +170,23 @@ func _handle_world_update(data: Dictionary) -> void:
 func _connected_to_server() -> void:
 	print("Connected to server")
 	network_ui.visible = false
+	# Successful connection resets the reconnect backoff.
+	reconnect_attempts = 0
+	reconnect_scheduled = false
+	reconnect_timer.stop()
 	_send_join()
 
 func _connection_failed() -> void:
 	print("Connection failed")
+	# Attempt to reconnect in test mode if the server is still rebooting.
+	_schedule_reconnect("connection failed")
 
 func _server_closed() -> void:
 	print("Server has been closed")
 	network_ui.visible = true
 	spawned_nodes.get_children().map(func(n): n.queue_free())
+	# Attempt to reconnect in test mode if the server restarts.
+	_schedule_reconnect("server closed")
 
 
 func _send_join() -> void:
@@ -177,3 +203,28 @@ func _send_join() -> void:
 	}
 	var json_str = JSON.stringify(message)
 	game_socket.send_text(json_str)
+
+func _schedule_reconnect(reason: String) -> void:
+	# Only auto-reconnect in test mode to avoid surprising players.
+	if not game_manager.TEST_MODE:
+		return
+	# Avoid stacking multiple timers or reconnecting while already connecting/open.
+	var state = game_socket.get_ready_state()
+	if reconnect_scheduled or state == WebSocketPeer.STATE_OPEN or state == WebSocketPeer.STATE_CONNECTING:
+		return
+	reconnect_attempts += 1
+	var delay = min(RECONNECT_BASE_DELAY * pow(2.0, float(reconnect_attempts - 1)), RECONNECT_MAX_DELAY)
+	reconnect_scheduled = true
+	print("Reconnect scheduled in %s seconds (%s)" % [delay, reason])
+	reconnect_timer.start(delay)
+
+func _on_reconnect_timeout() -> void:
+	# Clear the scheduled flag before attempting to connect.
+	reconnect_scheduled = false
+	# In test mode, the server is fixed; attempt to reconnect.
+	start_client(TEST_SERVER_URL)
+
+func _reset_socket() -> void:
+	# Replace the peer to ensure a clean reconnect after server restarts.
+	game_socket = WebSocketPeer.new()
+	connected = false
