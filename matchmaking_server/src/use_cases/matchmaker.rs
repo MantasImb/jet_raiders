@@ -29,6 +29,7 @@ impl Matchmaker {
 
     // Enqueue a player and attempt to find a match immediately.
     pub fn enqueue(&mut self, request: QueueRequest) -> MatchOutcome {
+        // NOTE: player_skill is not used for matching yet (MVP implementation).
         if let Some((index, opponent)) = self
             .queue
             .iter()
