@@ -1,16 +1,7 @@
-use crate::protocol::PlayerInput;
-use serde::Serialize;
+// Domain-level simulation entities and input/snapshot types.
 
-#[derive(Debug, Clone, Serialize)]
-pub enum ServerState {
-    Lobby,
-    MatchStarting { in_seconds: u32 },
-    MatchRunning,
-    MatchEnded,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct EntityState {
+#[derive(Debug, Clone)]
+pub struct EntitySnapshot {
     pub id: u64,
     pub x: f32,
     pub y: f32,
@@ -18,13 +9,20 @@ pub struct EntityState {
     pub hp: i32,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct ProjectileState {
+#[derive(Debug, Clone)]
+pub struct ProjectileSnapshot {
     pub id: u64,
     pub owner_id: u64,
     pub x: f32,
     pub y: f32,
     pub rot: f32,
+}
+
+#[derive(Debug, Clone)]
+pub struct PlayerInput {
+    pub thrust: f32,
+    pub turn: f32,
+    pub shoot: bool,
 }
 
 pub struct SimEntity {
@@ -55,7 +53,7 @@ pub struct SimProjectile {
     pub ttl: f32,
 }
 
-impl From<&SimEntity> for EntityState {
+impl From<&SimEntity> for EntitySnapshot {
     fn from(e: &SimEntity) -> Self {
         Self {
             id: e.id,
@@ -67,7 +65,7 @@ impl From<&SimEntity> for EntityState {
     }
 }
 
-impl From<&SimProjectile> for ProjectileState {
+impl From<&SimProjectile> for ProjectileSnapshot {
     fn from(p: &SimProjectile) -> Self {
         Self {
             id: p.id,

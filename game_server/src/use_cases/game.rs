@@ -1,9 +1,8 @@
-use crate::config;
-use crate::protocol::{GameEvent, PlayerInput, WorldUpdate};
-use crate::state::{EntityState, ProjectileState, ServerState, SimEntity};
-use crate::systems::{projectiles, ship_movement};
-use crate::tuning::player::PlayerTuning;
-use crate::tuning::projectile::ProjectileTuning;
+use crate::domain::{EntitySnapshot, PlayerInput, ProjectileSnapshot, SimEntity, SimProjectile};
+use crate::domain::systems::{projectiles, ship_movement};
+use crate::domain::tuning::player::PlayerTuning;
+use crate::domain::tuning::projectile::ProjectileTuning;
+use super::types::{GameEvent, ServerState, WorldUpdate};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::{broadcast, mpsc, watch};
 use tracing::info;
@@ -12,17 +11,19 @@ pub async fn world_task(
     mut input_rx: mpsc::Receiver<GameEvent>,
     world_tx: broadcast::Sender<WorldUpdate>,
     server_state_tx: watch::Sender<ServerState>,
+    tick_interval: Duration,
 ) {
     let mut tick: u64 = 0;
     let mut entities: Vec<SimEntity> = Vec::new();
-    let mut projectiles: Vec<crate::state::SimProjectile> = Vec::new();
+    let mut projectiles: Vec<SimProjectile> = Vec::new();
     let mut next_projectile_id: u64 = 1;
 
     let _ = server_state_tx.send(ServerState::MatchStarting { in_seconds: 3 });
     tokio::time::sleep(Duration::from_secs(3)).await;
     let _ = server_state_tx.send(ServerState::MatchRunning);
 
-    let mut interval = tokio::time::interval(config::TICK_INTERVAL);
+    // Drive the fixed-step game loop at the configured tick rate.
+    let mut interval = tokio::time::interval(tick_interval);
 
     // World bounds for wrapping.
     let (min_x, max_x) = (-400.0, 400.0);
@@ -84,7 +85,7 @@ pub async fn world_task(
             }
         }
 
-        let dt = config::TICK_INTERVAL.as_secs_f32();
+        let dt = tick_interval.as_secs_f32();
         let cfg = ship_movement::MovementConfig {
             max_speed: player_tuning.max_speed,
             turn_rate: player_tuning.turn_rate,
@@ -143,13 +144,13 @@ pub async fn world_task(
         );
 
         tick += 1;
-        let entities_snapshot: Vec<EntityState> = entities
+        let entities_snapshot: Vec<EntitySnapshot> = entities
             .iter()
             .filter(|e| e.alive)
-            .map(EntityState::from)
+            .map(EntitySnapshot::from)
             .collect();
-        let projectiles_snapshot: Vec<ProjectileState> =
-            projectiles.iter().map(ProjectileState::from).collect();
+        let projectiles_snapshot: Vec<ProjectileSnapshot> =
+            projectiles.iter().map(ProjectileSnapshot::from).collect();
 
         let _ = world_tx.send(WorldUpdate {
             tick,

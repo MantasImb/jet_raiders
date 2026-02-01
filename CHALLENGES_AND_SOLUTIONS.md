@@ -13,7 +13,8 @@ allocation path.
 
 ### Where it happens
 
-- `game_server/src/net.rs` runs one client loop per connection.
+- `game_server/src/interface_adapters/net.rs` runs one client loop per
+  connection.
 - Each loop receives a `WorldUpdate` (the source struct), not a prebuilt
   network payload.
 - Each loop then serializes that struct independently, which repeats work N

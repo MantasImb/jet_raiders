@@ -39,14 +39,15 @@ Proposed envelope (all little-endian):
   - `2` = World Update
 - `payload` (binary-serialized struct)
 
-Payload serialization should live in `protocol.rs` and use a binary codec such
-as `bincode` or `rkyv`. Pick one and keep it consistent across client and
+Payload serialization should live in `interface_adapters/protocol.rs` and use a
+binary codec such as `bincode` or `rkyv`. Pick one and keep it consistent across
+client and
 server. (If we choose `bincode`, enable deterministic settings and avoid
 variable-length floats.)
 
 ## 4. Server Changes
 
-### 4.1 `protocol.rs`
+### 4.1 `interface_adapters/protocol.rs`
 
 Add binary DTOs and codec helpers. Keep JSON DTOs unchanged.
 
@@ -56,10 +57,10 @@ Add binary DTOs and codec helpers. Keep JSON DTOs unchanged.
 
 Keep the clean architecture boundaries:
 
-- Protocol types stay in `protocol.rs`.
-- `state.rs` and `systems/*` remain free of serialization details.
+- Protocol types stay in `interface_adapters/protocol.rs`.
+- `domain/state.rs` and `domain/systems/*` remain free of serialization details.
 
-### 4.2 `net.rs`
+### 4.2 `interface_adapters/net.rs`
 
 Update the WebSocket loop:
 

@@ -97,7 +97,8 @@ Optional future message:
 
 ### Protocol Updates
 
-- Add a `ClientMessage` enum to `game_server/src/protocol.rs` with a `Join` variant.
+- Add a `ClientMessage` enum to `game_server/src/interface_adapters/protocol.rs`
+  with a `Join` variant.
 - Include `guest_id` and `display_name` in the `Join` payload.
 - Keep `PlayerInput` unchanged to avoid input handling churn.
 

@@ -26,12 +26,12 @@ Effective hit distance:
 
 All collision work is currently performed in the main world tick loop:
 
-- `game_server/src/game.rs` (inside `world_task`)
+- `game_server/src/use_cases/game.rs` (inside `world_task`)
 
 The radii are sourced from tuning:
 
-- `game_server/src/tuning/player.rs`
-- `game_server/src/tuning/projectile.rs`
+- `game_server/src/domain/tuning/player.rs`
+- `game_server/src/domain/tuning/projectile.rs`
 
 ## Important behavior rules
 
@@ -65,7 +65,7 @@ This is fine for small counts; later we can switch to spatial hashing / grid.
 
 ### Projectile movement + TTL
 
-File: `game_server/src/game.rs`
+File: `game_server/src/use_cases/game.rs`
 
 ```rust
 for p in &mut projectiles {
@@ -77,7 +77,7 @@ for p in &mut projectiles {
 
 ### Projectile vs player collision
 
-File: `game_server/src/game.rs`
+File: `game_server/src/use_cases/game.rs`
 
 ```rust
 let hit_radius = player_radius + projectile_radius;
@@ -112,7 +112,7 @@ projectiles.retain(|p| p.ttl > 0.0);
 
 ### Player/Projectile radii
 
-File: `game_server/src/tuning/player.rs`
+File: `game_server/src/domain/tuning/player.rs`
 
 ```rust
 pub struct PlayerTuning {
@@ -121,7 +121,7 @@ pub struct PlayerTuning {
 }
 ```
 
-File: `game_server/src/tuning/projectile.rs`
+File: `game_server/src/domain/tuning/projectile.rs`
 
 ```rust
 pub struct ProjectileTuning {

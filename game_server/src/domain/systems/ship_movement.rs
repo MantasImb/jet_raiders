@@ -10,7 +10,7 @@ pub struct MovementConfig {
     pub max_y: f32,
 }
 
-pub fn tick_entity(e: &mut crate::state::SimEntity, dt: f32, cfg: MovementConfig) {
+pub fn tick_entity(e: &mut crate::domain::SimEntity, dt: f32, cfg: MovementConfig) {
     // rotation
     e.rot += e.last_input.turn * cfg.turn_rate * dt;
 
@@ -35,7 +35,7 @@ pub fn tick_entity(e: &mut crate::state::SimEntity, dt: f32, cfg: MovementConfig
     wrap_entity(e, cfg);
 }
 
-fn wrap_entity(e: &mut crate::state::SimEntity, cfg: MovementConfig) {
+fn wrap_entity(e: &mut crate::domain::SimEntity, cfg: MovementConfig) {
     if e.x < cfg.min_x {
         e.x = cfg.max_x;
     } else if e.x > cfg.max_x {

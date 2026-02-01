@@ -1,7 +1,13 @@
-use crate::app_state::AppState;
-use crate::protocol::{ClientMessage, GameEvent, PlayerInput, ServerMessage, WorldUpdate};
-use crate::state::ServerState;
-use crate::utils::rng::rand_id;
+use crate::domain::PlayerInput;
+use crate::interface_adapters::protocol::{
+    ClientMessage,
+    PlayerInputDto,
+    ServerMessage,
+    WorldUpdateDto,
+};
+use crate::interface_adapters::state::AppState;
+use crate::interface_adapters::utils::rng::rand_id;
+use crate::use_cases::{GameEvent, ServerState, WorldUpdate};
 
 use axum::{
     Error,
@@ -41,7 +47,7 @@ pub async fn world_update_serializer(
     loop {
         match world_rx.recv().await {
             Ok(update) => {
-                let msg = ServerMessage::WorldUpdate(update);
+                let msg = ServerMessage::WorldUpdate(WorldUpdateDto::from(update));
                 let txt = match serde_json::to_string(&msg) {
                     Ok(txt) => txt,
                     Err(e) => {
@@ -184,7 +190,7 @@ async fn bootstrap_connection(
     // Keep in mind that we clone as soon as we borrow to avoid holding the lock. (especially
     // during an await)
     let initial_state = server_state_rx.borrow().clone();
-    let state_msg = ServerMessage::GameState(initial_state);
+    let state_msg = ServerMessage::GameState(initial_state.into());
     if let Err(e) = send_message(socket, &state_msg).await {
         state
             .input_tx
@@ -498,6 +504,7 @@ async fn handle_incoming_ws(
                             return Ok(LoopControl::Continue);
                         }
 
+                        let input: PlayerInput = input.into();
                         process_input_message(
                             player_id,
                             input_tx,
@@ -508,11 +515,11 @@ async fn handle_incoming_ws(
                     }
                     Err(parse_err) => {
                         // Legacy client fallback: accept raw PlayerInput messages.
-                        match serde_json::from_str::<PlayerInput>(&text) {
+                        match serde_json::from_str::<PlayerInputDto>(&text) {
                             Ok(input) => process_input_message(
                                 player_id,
                                 input_tx,
-                                input,
+                                input.into(),
                                 last_input_full_log,
                                 last_invalid_input_log,
                             ),
@@ -594,7 +601,7 @@ async fn forward_server_state(
     bytes_out: &mut u64,
 ) -> LoopControl {
     let st = server_state_rx.borrow().clone();
-    let msg = ServerMessage::GameState(st);
+    let msg = ServerMessage::GameState(st.into());
     match send_message(socket, &msg).await {
         Ok(bytes) => {
             *msgs_out += 1;

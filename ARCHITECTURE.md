@@ -88,17 +88,35 @@ sessions.
 game_server/
 ├── Cargo.toml          # Dependencies: axum, tokio, serde, etc.
 └── src/
-    ├── main.rs         # Entry point. Sets up Axum and the LobbyManager.
-    ├── config.rs       # Shared constants.
-    ├── protocol.rs     # The "Language". Shared Structs/Enums.
-    ├── net.rs          # WebSocket handling. Handshakes & routing to lobbies.
-    ├── lobby.rs        # Manages active game sessions (HashMap<ID, Channel>).
-    ├── game.rs         # The Game Loop (One instance per Lobby).
-    ├── state.rs        # Data definitions: GameState, Player, Projectile.
-    └── systems/        # Logic Modules.
+    ├── main.rs         # Entry point. Delegates to frameworks/server.rs.
+    ├── domain/         # Entities + rules.
+    │   ├── mod.rs
+    │   ├── state.rs
+    │   ├── systems/
+    │   │   ├── mod.rs
+    │   │   ├── ship_movement.rs
+    │   │   └── projectiles.rs
+    │   └── tuning/
+    │       ├── mod.rs
+    │       ├── player.rs
+    │       └── projectile.rs
+    ├── use_cases/      # Game loop orchestration.
+    │   ├── mod.rs
+    │   ├── game.rs
+    │   ├── lobby.rs
+    │   └── types.rs
+    ├── interface_adapters/  # Networking + protocol DTOs.
+    │   ├── mod.rs
+    │   ├── net.rs
+    │   ├── protocol.rs
+    │   ├── state.rs
+    │   └── utils/
+    │       ├── mod.rs
+    │       └── rng.rs
+    └── frameworks/     # Runtime wiring and config.
         ├── mod.rs
-        ├── ship_movement.rs
-        └── projectiles.rs
+        ├── config.rs
+        └── server.rs
 ```
 
 ## 4. Communication Protocol (`protocol.rs`)

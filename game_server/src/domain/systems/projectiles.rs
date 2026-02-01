@@ -1,4 +1,4 @@
-use crate::state::{SimEntity, SimProjectile};
+use crate::domain::{SimEntity, SimProjectile};
 use tracing::info;
 
 #[derive(Debug, Clone, Copy)]

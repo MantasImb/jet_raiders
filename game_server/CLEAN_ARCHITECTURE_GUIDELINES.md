@@ -15,27 +15,28 @@ Dependencies must point inward:
 
 In practice, that means:
 
-- `state.rs` and `systems/*` must not import Axum, WebSocket types, `serde`,
+- `domain/state.rs` and `domain/systems/*` must not import Axum, WebSocket types, `serde`,
   `tokio::net`, or other transport/runtime/framework concerns.
-- `protocol.rs` must not import `GameState` or other authoritative world
+- `interface_adapters/protocol.rs` must not import `GameState` or other authoritative world
   internals.
-- `main.rs` and `net.rs` are allowed to import everything because they are the
-  outermost wiring/adapter layer.
+- `frameworks/server.rs` and `interface_adapters/net.rs` are allowed to import
+  everything because they are the outermost wiring/adapter layer.
 
 ## Layer mapping for this repository
 
 Use this mapping when deciding where code belongs:
 
-- Entities (core domain): `state.rs`, `systems/*`
-- Use cases (application): `game.rs`, `lobby.rs`
-- Interface adapters: `net.rs`, `protocol.rs`
-- Frameworks/drivers: `main.rs`, `config.rs`
+- Entities (core domain): `domain/state.rs`, `domain/systems/*`, `domain/tuning/*`
+- Use cases (application): `use_cases/game.rs`, `use_cases/lobby.rs`, `use_cases/types.rs`
+- Interface adapters: `interface_adapters/net.rs`,
+  `interface_adapters/protocol.rs`, `interface_adapters/state.rs`
+- Frameworks/drivers: `frameworks/server.rs`, `frameworks/config.rs`, `main.rs`
 
 ## Module responsibilities (authoritative)
 
 If you are unsure where something belongs, use the rules below.
 
-### `main.rs` (bootstrap)
+### `frameworks/server.rs` (bootstrap)
 
 Owns:
 
@@ -50,7 +51,7 @@ Must not own:
 - JSON encode/decode.
 - Game rules or `GameState` mutation.
 
-### `config.rs` (configuration)
+### `frameworks/config.rs` (configuration)
 
 Owns:
 
@@ -62,11 +63,11 @@ Must not own:
 - Game rules.
 - Networking.
 
-### `protocol.rs` (wire contract)
+### `interface_adapters/protocol.rs` (wire contract)
 
 Owns:
 
-- On-the-wire DTOs: `ClientMessage`, `ServerMessage`, `GameEvent`.
+- On-the-wire DTOs: `ClientMessage`, `ServerMessage`, input/output DTOs.
 - `serde` derives and schema stability.
 
 Must not own:
@@ -75,7 +76,7 @@ Must not own:
 - Physics/game rules.
 - Axum/WebSocket types.
 
-### `net.rs` (network adapter)
+### `interface_adapters/net.rs` (network adapter)
 
 Owns:
 
@@ -89,7 +90,7 @@ Must not own:
 - Ship movement/projectile/collision logic.
 - Authoritative `GameState`.
 
-### `lobby.rs` (application orchestration)
+### `use_cases/lobby.rs` (application orchestration)
 
 Owns:
 
@@ -103,7 +104,7 @@ Must not own:
 - Socket read/write loops.
 - Game rules inside systems.
 
-### `game.rs` (world task)
+### `use_cases/game.rs` (world task)
 
 Owns:
 
@@ -118,7 +119,7 @@ Must not own:
 - WebSocket types.
 - JSON parsing.
 
-### `state.rs` (domain model)
+### `domain/state.rs` (domain model)
 
 Owns:
 
@@ -131,7 +132,7 @@ Must not own:
 - Axum.
 - Socket/channel plumbing.
 
-### `systems/*` (domain updates)
+### `domain/systems/*` (domain updates)
 
 Owns:
 
@@ -148,16 +149,16 @@ Must not own:
 
 This codebase separates two different kinds of data shapes:
 
-- Domain types (authoritative): live in `state.rs` and are mutated by
-  `systems/*` and orchestrated by `game.rs`.
-- Protocol DTOs (wire contract): live in `protocol.rs` and exist only to
+- Domain types (authoritative): live in `domain/state.rs` and are mutated by
+  `domain/systems/*` and orchestrated by `use_cases/game.rs`.
+- Protocol DTOs (wire contract): live in `interface_adapters/protocol.rs` and exist only to
   serialize/deserialize and version the client/server message contract.
 
 Rules:
 
-- Do not store `protocol::*` types inside `GameState`.
+- Do not store `protocol::*` types inside domain entities.
 - Do not make systems accept `protocol::*` types.
-- Convert at the boundary (usually `net.rs`).
+- Convert at the boundary (usually `interface_adapters/net.rs`).
 
 A good pattern is to have:
 
@@ -169,30 +170,31 @@ A good pattern is to have:
 The game loop is a long-running task that owns the authoritative world state.
 Networking code never owns or mutates `GameState`.
 
-- `net.rs` receives bytes, parses them into `protocol::ClientMessage`, and
+- `interface_adapters/net.rs` receives bytes, parses them into `protocol::ClientMessage`, and
   converts to typed domain inputs.
-- `game.rs` receives typed domain inputs over channels, updates the world, and
+- `use_cases/game.rs` receives typed domain inputs over channels, updates the world, and
   emits outputs.
 
 ### Outputs and snapshots
 
 You have two acceptable shapes for outputs:
 
-- Strict separation (preferred): `game.rs` emits domain events/snapshots and
-  `net.rs` converts them to `protocol::ServerMessage`.
-- Pragmatic early stage: `game.rs` emits `protocol::ServerMessage` as long as
-  `game.rs` does not import Axum/WebSocket types.
+- Strict separation (preferred): `use_cases/game.rs` emits domain events/snapshots and
+  `interface_adapters/net.rs` converts them to `protocol::ServerMessage`.
+- Pragmatic early stage: `use_cases/game.rs` emits `protocol::ServerMessage` as long as
+  `use_cases/game.rs` does not import Axum/WebSocket types.
 
-Do not let protocol types leak into `state.rs` or `systems/*` either way.
+Do not let protocol types leak into `domain/state.rs` or `domain/systems/*`
+either way.
 
 ## Ownership and channel wiring
 
 Channel and task ownership lives in the outer layers:
 
-- `main.rs` wires the app together (single world or lobby manager), then starts
+- `frameworks/server.rs` wires the app together (single world or lobby manager), then starts
   the server.
-- `lobby.rs` owns per-lobby channels and the lifetime of lobby game loop tasks.
-- `net.rs` owns per-connection tasks.
+- `use_cases/lobby.rs` owns per-lobby channels and the lifetime of lobby game loop tasks.
+- `interface_adapters/net.rs` owns per-connection tasks.
 
 Notes:
 
@@ -207,44 +209,50 @@ Both are supported by the same boundaries; only the orchestration changes.
 
 ### Single-world
 
-- One `game.rs` loop owns one `GameState`.
+- One `use_cases/game.rs` loop owns one `GameState`.
 - All connections send inputs into the same input channel.
 - Outgoing snapshots/events are broadcast to all connections.
 
 Where things live:
 
-- `main.rs` creates the channels and spawns the single game loop.
-- `net.rs` uses shared senders/receivers to connect each socket.
+- `frameworks/server.rs` creates the channels and spawns the single game loop.
+- `interface_adapters/net.rs` uses shared senders/receivers to connect each
+  socket.
 
 ### Lobbies
 
 - Each lobby has its own game loop task and its own channels.
-- `lobby.rs` returns a `LobbyHandle` (typically containing `tx_input` and an
+- `use_cases/lobby.rs` returns a `LobbyHandle` (typically containing `tx_input` and an
   outgoing receiver/subscription).
-- `net.rs` selects a lobby based on a join message, then routes subsequent
+- `interface_adapters/net.rs` selects a lobby based on a join message, then routes subsequent
   inputs to that lobby handle.
 
 ## Rules of thumb (fast routing for new code)
 
-- If it changes the world: `game.rs`, `state.rs`, `systems/*`.
-- If it talks JSON/WebSockets or Axum types: `net.rs` and `protocol.rs`.
-- If it creates tasks, channels, registries, or starts the server: `main.rs` and
-  `lobby.rs`.
+- If it changes the world: `use_cases/game.rs`, `domain/state.rs`,
+  `domain/systems/*`.
+- If it talks JSON/WebSockets or Axum types: `interface_adapters/net.rs` and
+  `interface_adapters/protocol.rs`.
+- If it creates tasks, channels, registries, or starts the server:
+  `frameworks/server.rs` and `use_cases/lobby.rs`.
 
 ## Common mistakes to avoid
 
 - Protocol DTOs used as domain state:
-  - Symptom: `crate::protocol::*` imported in `state.rs` or `systems/*`.
-  - Fix: introduce/keep a domain input/state type and convert in `net.rs`.
+  - Symptom: `crate::protocol::*` imported in `domain/state.rs` or `domain/systems/*`.
+  - Fix: introduce/keep a domain input/state type and convert in
+    `interface_adapters/net.rs`.
 
 - Game loop depends on sockets/framework:
-  - Symptom: `game.rs` imports Axum WebSocket types.
-  - Fix: move socket logic to `net.rs`; keep only channels/time/domain in
-    `game.rs`.
+  - Symptom: `use_cases/game.rs` imports Axum WebSocket types.
+  - Fix: move socket logic to `interface_adapters/net.rs`; keep only
+    channels/time/domain in `use_cases/game.rs`.
 
-- Game loop logic in `main.rs`:
-  - Symptom: `main.rs` contains a tick/update loop or mutates `GameState`.
-  - Fix: move the loop into `game.rs`; leave `main.rs` as composition only.
+- Game loop logic in `frameworks/server.rs`:
+  - Symptom: `frameworks/server.rs` contains a tick/update loop or mutates
+    `GameState`.
+  - Fix: move the loop into `use_cases/game.rs`; leave
+    `frameworks/server.rs` as composition only.
 
 - Fan-out using a single `mpsc::Receiver`:
   - Symptom: trying to clone the receiver or share it between connections.

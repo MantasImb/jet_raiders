@@ -1,5 +1,4 @@
-use crate::protocol::{GameEvent, WorldUpdate};
-use crate::state::ServerState;
+use crate::use_cases::{GameEvent, ServerState, WorldUpdate};
 use axum::extract::ws::Utf8Bytes;
 use tokio::sync::{broadcast, mpsc, watch};
 
