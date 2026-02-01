@@ -13,6 +13,31 @@ region/game server, and returns lobby assignments to clients.
 - Issue a short-lived match ticket for the game server.
 - Emit match status updates to clients.
 
+## Queue Flow (Player -> Match -> Head Service)
+
+This flow describes how a player is queued and how the head service is told a
+match is ready. It reflects the current simple in-memory implementation, while
+leaving room for additional matchmaking rules later.
+
+1. **Request received**: The head service sends `POST /matchmaking/queue` with
+   `player_id`, `player_skill`, and `region`.
+2. **Request validated**: The matchmaking handler checks required fields and
+   normalizes the payload for the queue use case.
+3. **Queue evaluation**: The matchmaker looks for a waiting player in the same
+   region. Matching rules are intentionally minimal for now (region only).
+4. **Match found**:
+    - The waiting player is removed from the queue.
+    - A `match_id` is created for the two players.
+    - The service responds immediately with `status: matched` plus the opponent
+      and match identifiers.
+5. **No match yet**:
+    - The player is stored in the in-memory queue.
+    - A `ticket_id` is issued so the head service can track the request.
+    - The service responds with `status: waiting`.
+6. **Head service response**: The head service receives the response and can
+   either notify the client immediately (matched) or keep polling until a match
+   is returned.
+
 ## Current Axum Server Functionality to Extract
 
 - Shift the current direct `/ws` connection flow into a matchmaking-driven
