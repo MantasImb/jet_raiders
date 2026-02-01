@@ -1,15 +1,12 @@
 // Framework bootstrap for the game server runtime.
 
 use crate::frameworks::config;
-use crate::interface_adapters::net;
-use crate::interface_adapters::net::ws_handler;
+use crate::interface_adapters::net::{create_lobby_handler, spawn_lobby_serializers, ws_handler};
 use crate::interface_adapters::state::AppState;
-use crate::use_cases::game::world_task;
-use crate::use_cases::{GameEvent, ServerState, WorldUpdate};
+use crate::use_cases::{LobbyRegistry, LobbySettings};
 
-use axum::{extract::ws::Utf8Bytes, routing::get, Router};
-use std::{net::SocketAddr, sync::Arc};
-use tokio::sync::{broadcast, mpsc, watch};
+use axum::{routing::{get, post}, Router};
+use std::{collections::HashSet, net::SocketAddr, sync::Arc};
 
 fn init_tracing() {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
@@ -42,49 +39,32 @@ pub async fn run() {
     let _ = dotenvy::dotenv();
     init_tracing();
 
-    // Setup Channels
-    // input_tx/rx: All client inputs go to the single World Task.
-    let (input_tx, input_rx) = mpsc::channel::<GameEvent>(
-        config::INPUT_CHANNEL_CAPACITY,
-    );
+    // Setup Lobby Registry
+    // This owns the set of active lobby world tasks.
+    let lobby_registry = Arc::new(LobbyRegistry::new(LobbySettings {
+        input_channel_capacity: config::INPUT_CHANNEL_CAPACITY,
+        world_broadcast_capacity: config::WORLD_BROADCAST_CAPACITY,
+        tick_interval: config::TICK_INTERVAL,
+    }));
 
-    // world_tx/rx: World updates are broadcast to all clients.
-    let (world_tx, _world_rx) = broadcast::channel::<WorldUpdate>(config::WORLD_BROADCAST_CAPACITY);
-
-    // world_bytes_tx/rx: Serialized world updates shared across all clients.
-    let (world_bytes_tx, _world_bytes_rx) =
-        broadcast::channel::<Utf8Bytes>(config::WORLD_BROADCAST_CAPACITY);
-    let (world_latest_tx, _world_latest_rx) = watch::channel::<Utf8Bytes>(Utf8Bytes::from(""));
-
-    // server_state_tx: High-level state (Lobby, MatchRunning) changes.
-    let (server_state_tx, _server_state_rx) = watch::channel::<ServerState>(ServerState::Lobby);
+    // Create the default test lobby and spawn its world task.
+    let test_lobby_id = "test".to_string();
+    let test_lobby = lobby_registry
+        .create_lobby(test_lobby_id.clone(), HashSet::new())
+        .await
+        .expect("test lobby should initialize");
+    spawn_lobby_serializers(&test_lobby);
 
     let state = Arc::new(AppState {
-        input_tx,
-        world_tx,
-        world_bytes_tx,
-        world_latest_tx,
-        server_state_tx,
+        lobby_registry,
+        default_lobby_id: Arc::from(test_lobby_id.as_str()),
     });
 
-    // Spawn the Game Loop (World Task)
-    // This runs independently in its own thread/task.
-    tokio::spawn(world_task(
-        input_rx,
-        state.world_tx.clone(),
-        state.server_state_tx.clone(),
-        config::TICK_INTERVAL,
-    ));
-
-    // Spawn the world update serializer task in the adapter layer.
-    tokio::spawn(net::world_update_serializer(
-        state.world_tx.subscribe(),
-        state.world_bytes_tx.clone(),
-        state.world_latest_tx.clone(),
-    ));
-
     // Start the Web Server
-    let app = Router::new().route("/ws", get(ws_handler)).with_state(state);
+    let app = Router::new()
+        .route("/ws", get(ws_handler))
+        .route("/lobbies", post(create_lobby_handler))
+        .with_state(state);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], 3001));
     tracing::info!(%addr, "listening");

@@ -7,18 +7,22 @@ use crate::interface_adapters::protocol::{
 };
 use crate::interface_adapters::state::AppState;
 use crate::interface_adapters::utils::rng::rand_id;
-use crate::use_cases::{GameEvent, ServerState, WorldUpdate};
+use crate::use_cases::{GameEvent, LobbyHandle, ServerState, WorldUpdate};
 
 use axum::{
     Error,
     extract::{
+        Json,
         State,
+        Query,
         ws::{CloseFrame, Message, Utf8Bytes, WebSocket, WebSocketUpgrade, close_code},
     },
+    http::StatusCode,
     response::IntoResponse,
 };
 use futures::SinkExt;
 use std::{
+    collections::HashSet,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -36,6 +40,32 @@ enum NetError {
     InputClosed,
     WorldUpdatesClosed,
     ServerStateClosed,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct LobbyInitRequest {
+    // Optional lobby id; when omitted the server generates one.
+    #[serde(default)]
+    lobby_id: Option<String>,
+    // Player ids that are allowed to spawn into the lobby.
+    #[serde(default)]
+    allowed_player_ids: Vec<u64>,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct LobbyInitResponse {
+    // The lobby id that was created.
+    lobby_id: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct LobbyQuery {
+    // The lobby id the client wants to join.
+    #[serde(default)]
+    lobby_id: Option<String>,
+    // Optional player id when the client has a preassigned identity.
+    #[serde(default)]
+    player_id: Option<u64>,
 }
 
 pub async fn world_update_serializer(
@@ -76,26 +106,77 @@ pub async fn world_update_serializer(
     }
 }
 
+pub fn spawn_lobby_serializers(lobby: &LobbyHandle) {
+    // Spawn a task that serializes world updates for this lobby.
+    tokio::spawn(world_update_serializer(
+        lobby.world_tx.subscribe(),
+        lobby.world_bytes_tx.clone(),
+        lobby.world_latest_tx.clone(),
+    ));
+}
+
 impl From<axum::Error> for NetError {
     fn from(e: axum::Error) -> Self {
         NetError::Ws(e)
     }
 }
 
+pub async fn create_lobby_handler(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<LobbyInitRequest>,
+) -> impl IntoResponse {
+    // Ensure we have a lobby id to create.
+    let lobby_id = payload
+        .lobby_id
+        .filter(|id| !id.trim().is_empty())
+        .unwrap_or_else(|| format!("lobby-{}", rand_id()));
+
+    let allowed_players: HashSet<u64> = payload.allowed_player_ids.into_iter().collect();
+
+    match state
+        .lobby_registry
+        .create_lobby(lobby_id.clone(), allowed_players)
+        .await
+    {
+        Ok(lobby) => {
+            // Create serializers so clients can subscribe immediately.
+            spawn_lobby_serializers(&lobby);
+            (StatusCode::CREATED, Json(LobbyInitResponse { lobby_id })).into_response()
+        }
+        Err(crate::use_cases::lobby::LobbyError::AlreadyExists) => {
+            (StatusCode::CONFLICT, "lobby already exists").into_response()
+        }
+    }
+}
+
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
     State(state): State<Arc<AppState>>,
+    Query(query): Query<LobbyQuery>,
 ) -> impl IntoResponse {
-    ws.on_upgrade(|socket| handle_socket(socket, state))
+    let lobby_id = query
+        .lobby_id
+        .unwrap_or_else(|| state.default_lobby_id.to_string());
+
+    let lobby = match state.lobby_registry.get_lobby(&lobby_id).await {
+        Some(lobby) => lobby,
+        None => return StatusCode::NOT_FOUND.into_response(),
+    };
+
+    ws.on_upgrade(|socket| handle_socket(socket, lobby, query.player_id))
 }
 
-async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
+async fn handle_socket(
+    mut socket: WebSocket,
+    lobby: LobbyHandle,
+    requested_player_id: Option<u64>,
+) {
     // Separate connection id for correlating logs before/after a player_id exists.
     let conn_id = rand_id();
     let span = info_span!("conn", conn_id, player_id = tracing::field::Empty);
     let _enter = span.enter();
 
-    let mut ctx = match bootstrap_connection(&mut socket, &state).await {
+    let mut ctx = match bootstrap_connection(&mut socket, &lobby, requested_player_id).await {
         Ok(ctx) => ctx,
         Err(e) => {
             error!(error = ?e, "failed to bootstrap connection");
@@ -137,6 +218,7 @@ struct ConnCtx {
     pub world_bytes_rx: broadcast::Receiver<Utf8Bytes>,
     pub world_latest_rx: watch::Receiver<Utf8Bytes>,
     pub server_state_rx: watch::Receiver<ServerState>,
+    pub can_spawn: bool,
     pub guest_id: Option<String>,
     pub display_name: Option<String>,
     pub has_joined: bool,
@@ -159,32 +241,38 @@ struct ConnCtx {
 
 async fn bootstrap_connection(
     socket: &mut WebSocket,
-    state: &AppState,
+    lobby: &LobbyHandle,
+    requested_player_id: Option<u64>,
 ) -> Result<ConnCtx, NetError> {
     // Subscribe to updates *before* doing anything else (awaits) to not miss packets.
-    let world_bytes_rx = state.world_bytes_tx.subscribe();
-    let world_latest_rx = state.world_latest_tx.subscribe();
-    let server_state_rx = state.server_state_tx.subscribe();
+    let world_bytes_rx = lobby.world_bytes_tx.subscribe();
+    let world_latest_rx = lobby.world_latest_tx.subscribe();
+    let server_state_rx = lobby.server_state_tx.subscribe();
 
     // Handshake & ID Assignment
+    // If an upstream service assigns player ids, prefer it; otherwise generate one locally.
     // `rand_id()` is process-unique and monotonic, so IDs won't collide within a running server.
-    // TODO: If/when auth exists, bind player identity to auth/session instead of random IDs.
-    let player_id = rand_id();
+    let player_id = requested_player_id.unwrap_or_else(rand_id);
 
     // Send Identity Packet
     // Tell the client "This is who you are".
     let identity_msg = ServerMessage::Identity { player_id };
     let _ = send_message(socket, &identity_msg).await?;
 
-    // Notify World Task
-    // Tell the game loop to spawn a ship for this ID.
-    // Join happens before initial state so the snapshot can include the newly spawned player.
-    // If anything after Join fails, compensate with Leave to avoid "spawned but never connected".
-    state
-        .input_tx
-        .send(GameEvent::Join { player_id })
-        .await
-        .map_err(|_| NetError::InputClosed)?;
+    // Only allow spawning if the lobby explicitly allows this player id.
+    let can_spawn = lobby.is_player_allowed(player_id);
+
+    if can_spawn {
+        // Notify World Task
+        // Tell the game loop to spawn a ship for this ID.
+        // Join happens before initial state so the snapshot can include the newly spawned player.
+        // If anything after Join fails, compensate with Leave to avoid "spawned but never connected".
+        lobby
+            .input_tx
+            .send(GameEvent::Join { player_id })
+            .await
+            .map_err(|_| NetError::InputClosed)?;
+    }
 
     // Send Initial State
     // Keep in mind that we clone as soon as we borrow to avoid holding the lock. (especially
@@ -192,11 +280,13 @@ async fn bootstrap_connection(
     let initial_state = server_state_rx.borrow().clone();
     let state_msg = ServerMessage::GameState(initial_state.into());
     if let Err(e) = send_message(socket, &state_msg).await {
-        state
-            .input_tx
-            .send(GameEvent::Leave { player_id })
-            .await
-            .map_err(|_| NetError::InputClosed)?; // InputClosed takes precedence
+        if can_spawn {
+            lobby
+                .input_tx
+                .send(GameEvent::Leave { player_id })
+                .await
+                .map_err(|_| NetError::InputClosed)?; // InputClosed takes precedence
+        }
         return Err(e);
     }
 
@@ -206,7 +296,8 @@ async fn bootstrap_connection(
         world_bytes_rx,
         world_latest_rx,
         server_state_rx,
-        input_tx: state.input_tx.clone(),
+        input_tx: lobby.input_tx.clone(),
+        can_spawn,
         guest_id: None,
         display_name: None,
         has_joined: false,
@@ -294,6 +385,7 @@ async fn run_client_loop(socket: &mut WebSocket, ctx: &mut ConnCtx) -> Result<()
         world_bytes_rx,
         world_latest_rx,
         server_state_rx,
+        can_spawn,
         guest_id,
         display_name,
         has_joined,
@@ -322,6 +414,7 @@ async fn run_client_loop(socket: &mut WebSocket, ctx: &mut ConnCtx) -> Result<()
                     incoming,
                     player_id,
                     input_tx,
+                    *can_spawn,
                     guest_id,
                     display_name,
                     has_joined,
@@ -419,6 +512,7 @@ async fn run_client_loop(socket: &mut WebSocket, ctx: &mut ConnCtx) -> Result<()
     if let Err(e) = disconnect_cleanup(
         player_id,
         input_tx,
+        *can_spawn,
         *msgs_in,
         *msgs_out,
         *bytes_in,
@@ -447,6 +541,7 @@ async fn handle_incoming_ws(
     incoming: Option<Result<Message, Error>>,
     player_id: u64,
     input_tx: &mpsc::Sender<GameEvent>,
+    can_spawn: bool,
     guest_id: &mut Option<String>,
     display_name: &mut Option<String>,
     has_joined: &mut bool,
@@ -504,6 +599,14 @@ async fn handle_incoming_ws(
                             return Ok(LoopControl::Continue);
                         }
 
+                        if !can_spawn {
+                            // Spectators cannot control ships in the lobby.
+                            if should_log(last_invalid_input_log) {
+                                warn!(player_id, "spectator input ignored");
+                            }
+                            return Ok(LoopControl::Continue);
+                        }
+
                         let input: PlayerInput = input.into();
                         process_input_message(
                             player_id,
@@ -516,13 +619,23 @@ async fn handle_incoming_ws(
                     Err(parse_err) => {
                         // Legacy client fallback: accept raw PlayerInput messages.
                         match serde_json::from_str::<PlayerInputDto>(&text) {
-                            Ok(input) => process_input_message(
-                                player_id,
-                                input_tx,
-                                input.into(),
-                                last_input_full_log,
-                                last_invalid_input_log,
-                            ),
+                            Ok(input) => {
+                                if !can_spawn {
+                                    // Legacy input is ignored for spectators.
+                                    if should_log(last_invalid_input_log) {
+                                        warn!(player_id, "spectator legacy input ignored");
+                                    }
+                                    Ok(LoopControl::Continue)
+                                } else {
+                                    process_input_message(
+                                        player_id,
+                                        input_tx,
+                                        input.into(),
+                                        last_input_full_log,
+                                        last_invalid_input_log,
+                                    )
+                                }
+                            }
                             Err(_) => {
                                 *invalid_json += 1;
                                 if should_log(last_invalid_input_log) {
@@ -619,6 +732,7 @@ async fn forward_server_state(
 async fn disconnect_cleanup(
     player_id: u64,
     input_tx: &mpsc::Sender<GameEvent>,
+    can_spawn: bool,
     msgs_in: u64,
     msgs_out: u64,
     bytes_in: u64,
@@ -626,10 +740,13 @@ async fn disconnect_cleanup(
     invalid_json: u32,
     lag_recovery_count: u64,
 ) -> Result<(), NetError> {
-    input_tx
-        .send(GameEvent::Leave { player_id })
-        .await
-        .map_err(|_| NetError::InputClosed)?;
+    if can_spawn {
+        // Only despawn players that were allowed to join the lobby.
+        input_tx
+            .send(GameEvent::Leave { player_id })
+            .await
+            .map_err(|_| NetError::InputClosed)?;
+    }
 
     debug!(
         player_id,

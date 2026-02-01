@@ -4,4 +4,5 @@ pub mod game;
 pub mod lobby;
 pub mod types;
 
+pub use lobby::{LobbyHandle, LobbyRegistry, LobbySettings};
 pub use types::{GameEvent, ServerState, WorldUpdate};
