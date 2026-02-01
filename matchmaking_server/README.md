@@ -67,17 +67,17 @@ leaving room for additional matchmaking rules later.
 
 ### Queue Request
 
-- `user_id`: authenticated user identifier.
-- `party_id`: optional party identifier.
+- `player_id`: player identifier supplied by the head service.
+- `player_skill`: matchmaking rating or tier.
 - `region`: preferred region.
-- `skill`: matchmaking rating or tier.
 
-### Match Assignment
+### Queue Response
 
-- `lobby_id`: assigned lobby identifier.
-- `server_addr`: game server address.
-- `match_ticket`: short-lived token for the game server.
-- `expires_at`: match ticket expiration time.
+- `status`: `waiting` or `matched`.
+- `ticket_id`: queue ticket identifier when waiting.
+- `match_id`: match identifier when matched.
+- `opponent_id`: opponent player identifier when matched.
+- `region`: the region used for matchmaking.
 
 ## Security Considerations
 
