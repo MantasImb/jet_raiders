@@ -1,9 +1,6 @@
 use crate::domain::PlayerInput;
 use crate::interface_adapters::protocol::{
-    ClientMessage,
-    PlayerInputDto,
-    ServerMessage,
-    WorldUpdateDto,
+    ClientMessage, PlayerInputDto, ServerMessage, WorldUpdateDto,
 };
 use crate::interface_adapters::state::AppState;
 use crate::interface_adapters::utils::rng::rand_id;
@@ -12,9 +9,7 @@ use crate::use_cases::{GameEvent, LobbyHandle, ServerState, WorldUpdate};
 use axum::{
     Error,
     extract::{
-        Json,
-        State,
-        Query,
+        Json, Query, State,
         ws::{CloseFrame, Message, Utf8Bytes, WebSocket, WebSocketUpgrade, close_code},
     },
     http::StatusCode,
@@ -163,7 +158,7 @@ pub async fn ws_handler(
         None => return StatusCode::NOT_FOUND.into_response(),
     };
 
-    ws.on_upgrade(|socket| handle_socket(socket, lobby, query.player_id))
+    ws.on_upgrade(move |socket| handle_socket(socket, lobby, query.player_id))
 }
 
 async fn handle_socket(
