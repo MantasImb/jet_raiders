@@ -19,8 +19,8 @@ leaving room for additional matchmaking rules later.
 
 1. **Request received**: The head service sends `POST /matchmaking/queue` with
    `player_id`, `player_skill`, and `region`.
-2. **Request validated**: The matchmaking handler checks required fields and
-   normalizes the payload for the queue use case.
+2. **Request validated**: The matchmaking handler checks required fields before
+   enqueueing.
 3. **Queue evaluation**: The matchmaker looks for a waiting player in the same
    region. Matching rules are intentionally minimal for now (region only).
 4. **Match found**:
@@ -32,9 +32,9 @@ leaving room for additional matchmaking rules later.
     - The player is stored in the in-memory queue.
     - A `ticket_id` is issued so the head service can track the request.
     - The service responds with `status: waiting`.
-6. **Head service response**: The head service receives the response and can
-   either notify the client immediately (matched) or keep polling until a match
-   is returned.
+6. **Head service response**: The head service receives the response and either
+   notifies the client immediately (matched) or waits to re-attempt once the
+   queued entry is cleared (a duplicate request returns a conflict error).
 
 ## External Interfaces
 
