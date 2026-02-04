@@ -4,3 +4,4 @@ pub mod net;
 pub mod protocol;
 pub mod state;
 pub mod utils;
+pub mod http;

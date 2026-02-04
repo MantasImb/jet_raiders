@@ -60,7 +60,7 @@ Keep the clean architecture boundaries:
 - Protocol types stay in `interface_adapters/protocol.rs`.
 - `domain/state.rs` and `domain/systems/*` remain free of serialization details.
 
-### 4.2 `interface_adapters/net.rs`
+### 4.2 `interface_adapters/net/client.rs`
 
 Update the WebSocket loop:
 

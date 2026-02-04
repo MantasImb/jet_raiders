@@ -4,14 +4,19 @@ use crate::domain::{EntitySnapshot, PlayerInput, ProjectileSnapshot};
 use crate::use_cases::{ServerState, WorldUpdate};
 use serde::{Deserialize, Serialize};
 
+/// Messages the server sends to connected clients over the WebSocket.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", content = "data")]
 pub enum ServerMessage {
+    // Assigned identity for the connection after Join is accepted.
     Identity { player_id: u64 },
+    // Snapshot of the world for a given tick.
     WorldUpdate(WorldUpdateDto),
+    // High-level server state transitions (lobby, match start/end).
     GameState(ServerStateDto),
 }
 
+/// Messages the client sends to the server over the WebSocket.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type", content = "data")]
 pub enum ClientMessage {
@@ -21,12 +26,14 @@ pub enum ClientMessage {
     Input(PlayerInputDto),
 }
 
+/// Payload for the Join handshake with identity metadata.
 #[derive(Debug, Clone, Deserialize)]
 pub struct JoinPayload {
     pub guest_id: String,
     pub display_name: String,
 }
 
+/// Per-tick input payload sent by the client after joining.
 #[derive(Debug, Clone, Deserialize)]
 pub struct PlayerInputDto {
     #[serde(default)]
@@ -47,6 +54,7 @@ impl From<PlayerInputDto> for PlayerInput {
     }
 }
 
+/// Snapshot of the world sent to clients on each tick.
 #[derive(Debug, Clone, Serialize)]
 pub struct WorldUpdateDto {
     pub tick: u64,
@@ -73,6 +81,7 @@ impl From<WorldUpdate> for WorldUpdateDto {
     }
 }
 
+/// Flattened entity state for wire transmission in world updates.
 #[derive(Debug, Clone, Serialize)]
 pub struct EntityStateDto {
     pub id: u64,
@@ -94,6 +103,7 @@ impl From<&EntitySnapshot> for EntityStateDto {
     }
 }
 
+/// Flattened projectile state for wire transmission in world updates.
 #[derive(Debug, Clone, Serialize)]
 pub struct ProjectileStateDto {
     pub id: u64,
@@ -115,6 +125,7 @@ impl From<&ProjectileSnapshot> for ProjectileStateDto {
     }
 }
 
+/// Server lifecycle state sent to clients for UI flow.
 #[derive(Debug, Clone, Serialize)]
 pub enum ServerStateDto {
     Lobby,

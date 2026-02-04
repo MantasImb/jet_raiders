@@ -1,6 +1,7 @@
-- [ ] Implement lobby system
-- [ ] Add player authentication instead of the default guest login (need to use the auth server, probably will need to implement some kind of additional player id instead of generating random id's within the game server when join happens)
+- [x] Implement lobby system
+- [x] Add player authentication instead of the default guest login (need to use the auth server, probably will need to implement some kind of additional player id instead of generating random id's within the game server when join happens)
 - [ ] Send state to clients. How many point per player etc.
-- [ ] Implement the test world with a dummy player. This world should have infinite rounds and no win condition, but this should be changeable via config.
-- [ ] Make it so that the world tasks are configurable via config file instead of hardcoded. (rounds etc)
-- [ ] refactor the code to make it more modular and follow the Clean Architecture principles.
+- [ ] Implement the test world with a dummy player. The test lobby now has an infinite time limit (0), but still needs the dummy player.
+- [ ] Make it so that the world tasks are configurable via config file instead of hardcoded. (rounds, win conditions, time limits)
+- [x] refactor the code to make it more modular and follow the Clean Architecture principles.
+- [ ] Implement authorization so that only the head_server can access the internal http endpoints.

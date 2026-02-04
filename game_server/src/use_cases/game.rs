@@ -3,6 +3,7 @@ use crate::domain::systems::{projectiles, ship_movement};
 use crate::domain::tuning::player::PlayerTuning;
 use crate::domain::tuning::projectile::ProjectileTuning;
 use super::types::{GameEvent, ServerState, WorldUpdate};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::{broadcast, mpsc, watch};
 use tracing::info;
@@ -12,6 +13,8 @@ pub async fn world_task(
     world_tx: broadcast::Sender<WorldUpdate>,
     server_state_tx: watch::Sender<ServerState>,
     tick_interval: Duration,
+    shutdown: Arc<tokio::sync::Notify>,
+    match_time_limit: Duration,
 ) {
     let mut tick: u64 = 0;
     let mut entities: Vec<SimEntity> = Vec::new();
@@ -42,8 +45,27 @@ pub async fn world_task(
     let player_max_hp: i32 = player_tuning.max_hp;
     let respawn_delay: f32 = player_tuning.respawn_seconds;
 
+    // Track match duration for time-limit based end conditions.
+    let mut match_elapsed = Duration::from_secs(0);
+    let mut match_ended = false;
+
     loop {
-        interval.tick().await;
+        tokio::select! {
+            _ = shutdown.notified() => {
+                // Exit cleanly when the lobby is removed.
+                break;
+            }
+            _ = interval.tick() => {
+                if !match_ended && match_time_limit != Duration::from_secs(0) {
+                    // Time limit is the current win condition; extend with other checks later.
+                    match_elapsed += tick_interval;
+                    if match_elapsed >= match_time_limit {
+                        let _ = server_state_tx.send(ServerState::MatchEnded);
+                        match_ended = true;
+                    }
+                }
+            }
+        }
 
         while let Ok(ev) = input_rx.try_recv() {
             match ev {
