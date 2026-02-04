@@ -10,6 +10,12 @@ service.
 - Restrict internal HTTP routes so only the head service can access them.
 - Keep request and error handling consistent across adapters.
 
+## Current Behavior
+
+- Internal HTTP handlers live in `interface_adapters/net/internal.rs`.
+- Lobby creation requires the head service to provide a `lobby_id`.
+- Internal routes return JSON error payloads using `ErrorResponse`.
+
 ## Threat Model (High Level)
 
 - Any external user can reach the game server's HTTP and WebSocket ports.

@@ -1,7 +1,7 @@
 // Framework bootstrap for the game server runtime.
 
 use crate::frameworks::config;
-use crate::interface_adapters::net::{create_lobby_handler, spawn_lobby_serializers, ws_handler};
+use crate::interface_adapters::net::{create_lobby_handler, spawn_lobby_serializer, ws_handler};
 use crate::interface_adapters::state::AppState;
 use crate::use_cases::{LobbyRegistry, LobbySettings};
 
@@ -63,7 +63,7 @@ pub async fn run() {
         )
         .await
         .expect("test lobby should initialize");
-    spawn_lobby_serializers(&test_lobby);
+    spawn_lobby_serializer(&test_lobby);
     lobby_registry.clone().spawn_match_end_watcher(
         test_lobby.lobby_id.clone(),
         test_lobby.server_state_tx.subscribe(),

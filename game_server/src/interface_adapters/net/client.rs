@@ -22,7 +22,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::sync::watch::Receiver;
-use tokio::sync::{broadcast, mpsc, watch};
+use tokio::sync::{Notify, broadcast, mpsc, watch};
 use tracing::{debug, error, info, info_span, warn};
 
 #[derive(Debug)]
@@ -85,7 +85,7 @@ pub async fn world_update_serializer(
     }
 }
 
-pub fn spawn_lobby_serializers(lobby: &LobbyHandle) {
+pub fn spawn_lobby_serializer(lobby: &LobbyHandle) {
     // Spawn a task that serializes world updates for this lobby.
     tokio::spawn(world_update_serializer(
         lobby.world_tx.subscribe(),
@@ -166,6 +166,10 @@ async fn handle_socket(
         .await
         .is_none()
     {
+        // Release the player slot if the lobby disappeared before registration.
+        ctx.lobby
+            .unregister_player_connection_if_owner(ctx.player_id, ctx.player_conn_token)
+            .await;
         // The lobby can be removed between lookup and registration during shutdown.
         warn!(lobby_id = %ctx.lobby_id, "lobby missing during connection registration");
         // Best-effort cleanup in case the lobby was removed after bootstrap.
@@ -215,6 +219,12 @@ struct ConnCtx {
     pub lobby_id: Arc<str>,
     // Registry access for connection lifecycle updates.
     pub lobby_registry: Arc<LobbyRegistry>,
+    // Lobby handle for per-player connection ownership cleanup.
+    pub lobby: LobbyHandle,
+    // Token used to verify ownership of the player connection slot.
+    pub player_conn_token: u64,
+    // Shutdown signal used to replace stale connections.
+    pub player_conn_shutdown: Arc<Notify>,
     // Whether the connection has been registered in the lobby counter.
     pub registered: bool,
     pub input_tx: mpsc::Sender<GameEvent>,
@@ -257,11 +267,22 @@ async fn bootstrap_connection(
     // If an upstream service assigns player ids, prefer it; otherwise generate one locally.
     // `rand_id()` is process-unique and monotonic, so IDs won't collide within a running server.
     let player_id = requested_player_id.unwrap_or_else(rand_id);
+    // Track this connection with a unique token so newer connections can replace it.
+    let player_conn_token = rand_id();
+    let player_conn_shutdown = lobby
+        .register_or_replace_player_connection(player_id, player_conn_token)
+        .await;
 
     // Send Identity Packet
     // Tell the client "This is who you are".
     let identity_msg = ServerMessage::Identity { player_id };
-    let _ = send_message(socket, &identity_msg).await?;
+    if let Err(err) = send_message(socket, &identity_msg).await {
+        // Ensure the player slot is freed if we fail the handshake early.
+        lobby
+            .unregister_player_connection_if_owner(player_id, player_conn_token)
+            .await;
+        return Err(err);
+    }
 
     // Only allow spawning if the lobby explicitly allows this player id.
     let can_spawn = lobby.is_player_allowed(player_id);
@@ -271,11 +292,17 @@ async fn bootstrap_connection(
         // Tell the game loop to spawn a ship for this ID.
         // Join happens before initial state so the snapshot can include the newly spawned player.
         // If anything after Join fails, compensate with Leave to avoid "spawned but never connected".
-        lobby
+        if let Err(err) = lobby
             .input_tx
             .send(GameEvent::Join { player_id })
             .await
-            .map_err(|_| NetError::InputClosed)?;
+            .map_err(|_| NetError::InputClosed)
+        {
+            lobby
+                .unregister_player_connection_if_owner(player_id, player_conn_token)
+                .await;
+            return Err(err);
+        }
     }
 
     // Send Initial State
@@ -291,6 +318,9 @@ async fn bootstrap_connection(
                 .await
                 .map_err(|_| NetError::InputClosed)?; // InputClosed takes precedence
         }
+        lobby
+            .unregister_player_connection_if_owner(player_id, player_conn_token)
+            .await;
         return Err(e);
     }
 
@@ -299,6 +329,9 @@ async fn bootstrap_connection(
         player_id,
         lobby_id: lobby.lobby_id.clone(),
         lobby_registry,
+        lobby: lobby.clone(),
+        player_conn_token,
+        player_conn_shutdown,
         registered: false,
         world_bytes_rx,
         world_latest_rx,
@@ -390,6 +423,9 @@ async fn run_client_loop(socket: &mut WebSocket, ctx: &mut ConnCtx) -> Result<()
     let ConnCtx {
         lobby_id,
         lobby_registry,
+        lobby,
+        player_conn_token,
+        player_conn_shutdown,
         registered,
         input_tx,
         world_bytes_rx,
@@ -506,6 +542,17 @@ async fn run_client_loop(socket: &mut WebSocket, ctx: &mut ConnCtx) -> Result<()
                     }
                 }
             }
+
+            // Connection replacement signal for duplicate player ids.
+            _ = player_conn_shutdown.notified() => {
+                // Ask the client to close; a newer connection took ownership.
+                *close_frame = Some(CloseFrame {
+                    code: close_code::POLICY,
+                    reason: "connection replaced".into(),
+                });
+                info!(player_id, "connection replaced by newer session");
+                true
+            }
         };
 
         if disconnect {
@@ -523,6 +570,8 @@ async fn run_client_loop(socket: &mut WebSocket, ctx: &mut ConnCtx) -> Result<()
         player_id,
         lobby_id,
         lobby_registry,
+        lobby,
+        *player_conn_token,
         *registered,
         input_tx,
         *can_spawn,
@@ -747,6 +796,8 @@ async fn disconnect_cleanup(
     player_id: u64,
     lobby_id: &Arc<str>,
     lobby_registry: &Arc<LobbyRegistry>,
+    lobby: &LobbyHandle,
+    player_conn_token: u64,
     registered: bool,
     input_tx: &mpsc::Sender<GameEvent>,
     can_spawn: bool,
@@ -769,6 +820,11 @@ async fn disconnect_cleanup(
         // Spectators keep lobbies alive by policy, so count every socket.
         lobby_registry.register_disconnect(lobby_id).await;
     }
+
+    // Release the player connection slot if this connection still owns it.
+    lobby
+        .unregister_player_connection_if_owner(player_id, player_conn_token)
+        .await;
 
     debug!(
         player_id,

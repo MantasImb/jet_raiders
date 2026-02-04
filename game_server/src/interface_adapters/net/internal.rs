@@ -1,5 +1,5 @@
 use crate::interface_adapters::http::ErrorResponse;
-use crate::interface_adapters::net::client::spawn_lobby_serializers;
+use crate::interface_adapters::net::client::spawn_lobby_serializer;
 use crate::interface_adapters::state::AppState;
 
 use axum::{
@@ -56,7 +56,7 @@ pub async fn create_lobby_handler(
     {
         Ok(lobby) => {
             // Create serializers so clients can subscribe immediately.
-            spawn_lobby_serializers(&lobby);
+            spawn_lobby_serializer(&lobby);
             // Watch for match end so empty lobbies can be cleaned up.
             state
                 .lobby_registry

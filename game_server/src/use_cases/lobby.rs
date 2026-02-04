@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
-use tokio::sync::{Notify, RwLock, broadcast, mpsc, watch};
+use tokio::sync::{Mutex, Notify, RwLock, broadcast, mpsc, watch};
 use tracing::{debug, info, warn};
 
 /// Shared configuration for spawning lobby worlds.
@@ -51,14 +51,58 @@ pub struct LobbyHandle {
     pub is_pinned: bool,
     /// Shutdown signal for the world task.
     pub shutdown_tx: Arc<Notify>,
+    /// Active player connections for duplicate-id handling.
+    pub active_player_connections: Arc<Mutex<HashMap<u64, PlayerConnectionSlot>>>,
     /// Players allowed to spawn into the lobby (empty means open lobby).
     allowed_players: Arc<HashSet<u64>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PlayerConnectionSlot {
+    /// Unique token for the connection owning this slot.
+    pub token: u64,
+    /// Shutdown signal for the connection to allow replacement.
+    pub shutdown: Arc<Notify>,
 }
 
 impl LobbyHandle {
     /// Returns true if the provided player id should spawn in the lobby.
     pub fn is_player_allowed(&self, player_id: u64) -> bool {
         self.allowed_players.is_empty() || self.allowed_players.contains(&player_id)
+    }
+
+    /// Registers a player connection, replacing any existing one.
+    pub async fn register_or_replace_player_connection(
+        &self,
+        player_id: u64,
+        token: u64,
+    ) -> Arc<Notify> {
+        let mut map = self.active_player_connections.lock().await;
+        if let Some(existing) = map.get(&player_id) {
+            // Replace the previous connection to recover from stale sessions.
+            existing.shutdown.notify_waiters();
+        }
+
+        let shutdown = Arc::new(Notify::new());
+        map.insert(
+            player_id,
+            PlayerConnectionSlot {
+                token,
+                shutdown: shutdown.clone(),
+            },
+        );
+        shutdown
+    }
+
+    /// Removes the player connection only if this connection still owns it.
+    pub async fn unregister_player_connection_if_owner(&self, player_id: u64, token: u64) {
+        let mut map = self.active_player_connections.lock().await;
+        let is_owner = map
+            .get(&player_id)
+            .is_some_and(|slot| slot.token == token);
+        if is_owner {
+            map.remove(&player_id);
+        }
     }
 }
 
@@ -141,6 +185,7 @@ impl LobbyRegistry {
             active_connections: Arc::new(AtomicUsize::new(0)),
             is_pinned,
             shutdown_tx,
+            active_player_connections: Arc::new(Mutex::new(HashMap::new())),
             allowed_players: Arc::new(allowed_players),
         };
 
