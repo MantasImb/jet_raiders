@@ -2,6 +2,9 @@
 
 Look for .md files within the main directory of the project for documentation regarding the project structure/architecture.
 
+Strictly follow `CLEAN_ARCHITECTURE_GUIDELINES.md` for all services and ensure
+service-specific docs do not conflict with the repository-wide rules.
+
 When asked to write code, always add comments and try to keep the code asked
 readable as possible.
 

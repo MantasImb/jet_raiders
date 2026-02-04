@@ -16,6 +16,11 @@ The head service is the front door for the Jet Raiders platform. It serves the
 primary web UI, coordinates account flows, and provides shared platform APIs
 that are not part of real-time gameplay.
 
+## Architecture Guidelines
+
+Follow `CLEAN_ARCHITECTURE_GUIDELINES.md` and the service architecture docs
+under `head_server/`.
+
 ## Responsibilities
 
 - Serve the web app and game shell.

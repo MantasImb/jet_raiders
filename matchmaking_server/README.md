@@ -5,6 +5,10 @@
 The matchmaking service groups players into matches based on simple queue rules
 and returns match results to the head service.
 
+## Architecture Guidelines
+
+Follow `CLEAN_ARCHITECTURE_GUIDELINES.md` for layering and dependency rules.
+
 ## Responsibilities
 
 - Accept matchmaking requests from clients via the head service.

@@ -197,7 +197,54 @@ You have two acceptable shapes for outputs:
 - Pragmatic early stage: `use_cases/game.rs` emits `protocol::ServerMessage` as long as
   `use_cases/game.rs` does not import Axum/WebSocket types.
 
+#### Pragmatic early stage (exception with guardrails)
+
+This exception is allowed to speed up early development, but it must remain
+temporary and tightly scoped. It is only for outputs, never for inputs or
+domain logic.
+
+Allowed:
+
+- `use_cases/game.rs` may emit `protocol::ServerMessage`.
+- No Axum/WebSocket types in `use_cases/*`.
+
+Not allowed:
+
+- Protocol types in `domain/state.rs` or `domain/systems/*`.
+- Any use case other than `use_cases/game.rs` emitting protocol messages.
+- Any use case accepting `protocol::*` as inputs.
+
+Guardrails (required):
+
+- Document the exception in the service README with a removal milestone.
+- Keep inputs as domain types; only outputs may use protocol DTOs.
+- Keep protocol dependencies out of `use_cases/*` except for the output type.
+
+Migration path:
+
+- Add domain events/snapshots in `use_cases/game.rs`.
+- Convert outputs in `interface_adapters/net/client.rs`.
+- Remove protocol types from `use_cases/game.rs`.
+
 Do not let protocol types leak into `domain/state.rs` or `domain/systems/*`
+
+## Cross-cutting concerns (logging, metrics, config, errors, IDs)
+
+Cross-cutting concerns are handled via interfaces in inner layers and concrete
+implementations in outer layers. These rules apply across all services.
+
+See `CROSS_CUTTING_CONCERNS.md` for the full guide, examples, and patterns.
+
+Summary rules:
+
+- Domain: no logging, metrics, config, or env access. Accept IDs/timestamps as
+  inputs.
+- Use cases: depend on small traits (e.g., `Telemetry`, `Metrics`, `Clock`,
+  `IdGenerator`). Do not construct concrete backends.
+- Interface adapters: map application errors to transport errors and attach
+  request context (correlation IDs, spans).
+- Frameworks/drivers: own tracing setup, metrics exporters, config parsing, and
+  concrete ID/clock/RNG implementations.
 either way.
 
 ## Ownership and channel wiring

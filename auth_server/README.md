@@ -6,6 +6,11 @@ The auth service is the source of truth for player identity. It validates login
 proofs (wallet signatures or other identity proofs), issues short-lived session
 tokens, and exposes verification endpoints for other services.
 
+## Architecture Guidelines
+
+Follow `CLEAN_ARCHITECTURE_GUIDELINES.md` and the service plan in
+`auth_server/ARCHITECTURE.md`.
+
 ## Responsibilities
 
 - Issue nonces for login challenges.
