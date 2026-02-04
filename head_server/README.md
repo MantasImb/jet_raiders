@@ -23,6 +23,8 @@ that are not part of real-time gameplay.
 - Host general platform APIs (friends, party management, inventory).
 - Forward users to matchmaking once authenticated.
 - Cache platform configuration (regions, feature flags, news).
+- Own lobby ID generation for game server lobby creation (game server no longer
+  generates lobby IDs).
 
 ## Client Access Pattern
 
