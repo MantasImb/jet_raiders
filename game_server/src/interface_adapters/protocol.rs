@@ -1,4 +1,5 @@
-// Wire protocol DTOs and conversions for game server messages.
+// Wire protocol DTOs and conversions for public game server messages.
+// Internal service-to-service DTOs should live outside this module.
 
 use crate::domain::{EntitySnapshot, PlayerInput, ProjectileSnapshot};
 use crate::use_cases::{ServerState, WorldUpdate};

@@ -1,11 +1,6 @@
-mod domain;
-mod frameworks;
-mod interface_adapters;
-mod use_cases;
-
-use frameworks::server;
+use game_server::frameworks::server::run_with_config;
 
 #[tokio::main]
-async fn main() {
-    server::run().await;
+async fn main() -> std::io::Result<()> {
+    run_with_config().await
 }

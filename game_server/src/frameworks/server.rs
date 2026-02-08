@@ -9,9 +9,12 @@ use axum::{
     Router,
     routing::{get, post},
 };
-use std::{collections::HashSet, net::SocketAddr, sync::Arc, time::Duration};
+use std::net::SocketAddr;
+use std::{collections::HashSet, io::Result, sync::Arc, time::Duration};
 
-fn init_tracing() {
+fn init_runtime() {
+    let _ = dotenvy::dotenv();
+
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
 
@@ -37,11 +40,40 @@ fn init_tracing() {
     }));
 }
 
-pub async fn run() {
-    // Load .env locally; safe to ignore when not present.
-    let _ = dotenvy::dotenv();
-    init_tracing();
+pub async fn run(listener: tokio::net::TcpListener) -> Result<()> {
+    let address = listener.local_addr()?;
+    // build state
+    let state = build_state().await;
+    // Start the Web Server
+    let app = Router::new()
+        .route("/ws", get(ws_handler))
+        .route("/lobbies", post(create_lobby_handler))
+        .with_state(state);
 
+    tracing::info!(%address, "listening");
+
+    // Serve app and report errors rather than panicking
+    axum::serve(listener, app).await.inspect_err(|e| {
+        tracing::error!(error = %e, "server error");
+    })
+}
+
+pub async fn run_with_config() -> Result<()> {
+    init_runtime();
+
+    let address = SocketAddr::from(([127, 0, 0, 1], config::http_port()));
+
+    // Bind TCP listener with error handling
+    let listener = tokio::net::TcpListener::bind(address)
+        .await
+        .inspect_err(|e| {
+            tracing::error!(%address, error = %e, "failed to bind");
+        })?;
+
+    run(listener).await
+}
+
+async fn build_state() -> Arc<AppState> {
     // Setup Lobby Registry
     // This owns the set of active lobby world tasks.
     let lobby_registry = Arc::new(LobbyRegistry::new(LobbySettings {
@@ -69,31 +101,8 @@ pub async fn run() {
         test_lobby.server_state_tx.subscribe(),
     );
 
-    let state = Arc::new(AppState {
+    Arc::new(AppState {
         lobby_registry,
         default_lobby_id: Arc::from(test_lobby_id.as_str()),
-    });
-
-    // Start the Web Server
-    let app = Router::new()
-        .route("/ws", get(ws_handler))
-        .route("/lobbies", post(create_lobby_handler))
-        .with_state(state);
-
-    let addr = SocketAddr::from(([127, 0, 0, 1], 3001));
-    tracing::info!(%addr, "listening");
-
-    // Bind TCP listener with error handling
-    let listener = match tokio::net::TcpListener::bind(addr).await {
-        Ok(l) => l,
-        Err(e) => {
-            tracing::error!(%addr, error = %e, "failed to bind");
-            return; // Abort startup on bind failure
-        }
-    };
-
-    // Serve app and report errors rather than panicking
-    if let Err(e) = axum::serve(listener, app).await {
-        tracing::error!(error = %e, "server error");
-    }
+    })
 }

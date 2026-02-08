@@ -1,7 +1,13 @@
-use std::time::Duration;
+use std::{env, time::Duration};
 
 // Runtime/server constants (not gameplay tuning).
 
+pub fn http_port() -> u16 {
+    env::var("GAME_SERVER_PORT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(3001)
+}
 pub const INPUT_CHANNEL_CAPACITY: usize = 1024;
 pub const WORLD_BROADCAST_CAPACITY: usize = 128;
 
