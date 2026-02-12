@@ -10,7 +10,7 @@ class_name Player
 @onready var hit_particle: CPUParticles2D = $HitParticle
 
 @export var player_name: String
-@export var player_id: int = 0
+@export var player_id: String = "0"
 
 # Interpolation
 var target_position: Vector2 = Vector2.ZERO
@@ -47,6 +47,7 @@ const PLANE_SHOOT = preload("res://Audio/PlaneShoot.wav")
 
 var game_manager: GameManager
 var network_manager: NetworkManager
+var user: UserManager
 
 func _ready() -> void:
 	game_manager = get_tree().get_current_scene().get_node("GameManager")
@@ -54,6 +55,7 @@ func _ready() -> void:
 	
 	if get_tree().get_current_scene().has_node("Network"):
 		network_manager = get_tree().get_current_scene().get_node("Network")
+		user = network_manager.get_node("UserManager")
 
 	target_position = position
 	target_rotation = rotation
@@ -65,7 +67,7 @@ func update_state(state: Dictionary) -> void:
 		current_hp = int(state.hp)
 	
 	# If this is our local player and game manager doesn't know it yet, register it
-	if network_manager and player_id == network_manager.local_player_id:
+	if network_manager and player_id == user.local_player_id:
 		if game_manager and game_manager.local_player != self:
 			game_manager.local_player = self
 			print("Local player registered with GameManager: ", player_id)

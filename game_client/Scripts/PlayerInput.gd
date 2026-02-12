@@ -7,12 +7,14 @@ var turn_input: float
 var shoot_input: bool
 
 var network_manager: NetworkManager
+var user: UserManager
 
 func _ready() -> void:
 	# Find NetworkManager in the scene tree
 	var root = get_tree().get_current_scene()
 	if root.has_node("Network"):
 		network_manager = root.get_node("Network")
+		user = network_manager.get_node("UserManager")
 		
 
 var acc := 0.0
@@ -37,7 +39,7 @@ func _physics_process(delta: float) -> void:
 	# Only the local player instance should send inputs to the server.
 	var parent = get_parent()
 	if parent is Player:
-		if parent.player_id != network_manager.local_player_id:
+		if parent.player_id != user.local_player_id:
 			return
 		
 		var packet = {

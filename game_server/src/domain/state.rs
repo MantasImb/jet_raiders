@@ -2,7 +2,7 @@
 
 #[derive(Debug, Clone)]
 pub struct EntitySnapshot {
-    pub id: u64,
+    pub id: String,
     pub x: f32,
     pub y: f32,
     pub rot: f32,
@@ -11,8 +11,8 @@ pub struct EntitySnapshot {
 
 #[derive(Debug, Clone)]
 pub struct ProjectileSnapshot {
-    pub id: u64,
-    pub owner_id: u64,
+    pub id: String,
+    pub owner_id: String,
     pub x: f32,
     pub y: f32,
     pub rot: f32,
@@ -56,7 +56,7 @@ pub struct SimProjectile {
 impl From<&SimEntity> for EntitySnapshot {
     fn from(e: &SimEntity) -> Self {
         Self {
-            id: e.id,
+            id: e.id.to_string(),
             x: e.x,
             y: e.y,
             rot: e.rot,
@@ -68,8 +68,8 @@ impl From<&SimEntity> for EntitySnapshot {
 impl From<&SimProjectile> for ProjectileSnapshot {
     fn from(p: &SimProjectile) -> Self {
         Self {
-            id: p.id,
-            owner_id: p.owner_id,
+            id: p.id.to_string(),
+            owner_id: p.owner_id.to_string(),
             x: p.x,
             y: p.y,
             rot: p.rot,

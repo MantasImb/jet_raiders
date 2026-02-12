@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 #[serde(tag = "type", content = "data")]
 pub enum ServerMessage {
     // Assigned identity for the connection after Join is accepted.
-    Identity { player_id: u64 },
+    Identity { player_id: String },
     // Snapshot of the world for a given tick.
     WorldUpdate(WorldUpdateDto),
     // High-level server state transitions (lobby, match start/end).
@@ -68,11 +68,7 @@ impl From<WorldUpdate> for WorldUpdateDto {
     fn from(update: WorldUpdate) -> Self {
         Self {
             tick: update.tick,
-            entities: update
-                .entities
-                .iter()
-                .map(EntityStateDto::from)
-                .collect(),
+            entities: update.entities.iter().map(EntityStateDto::from).collect(),
             projectiles: update
                 .projectiles
                 .iter()
@@ -85,7 +81,7 @@ impl From<WorldUpdate> for WorldUpdateDto {
 /// Flattened entity state for wire transmission in world updates.
 #[derive(Debug, Clone, Serialize)]
 pub struct EntityStateDto {
-    pub id: u64,
+    pub id: String,
     pub x: f32,
     pub y: f32,
     pub rot: f32,
@@ -95,7 +91,7 @@ pub struct EntityStateDto {
 impl From<&EntitySnapshot> for EntityStateDto {
     fn from(entity: &EntitySnapshot) -> Self {
         Self {
-            id: entity.id,
+            id: entity.id.clone(),
             x: entity.x,
             y: entity.y,
             rot: entity.rot,
@@ -107,8 +103,8 @@ impl From<&EntitySnapshot> for EntityStateDto {
 /// Flattened projectile state for wire transmission in world updates.
 #[derive(Debug, Clone, Serialize)]
 pub struct ProjectileStateDto {
-    pub id: u64,
-    pub owner_id: u64,
+    pub id: String,
+    pub owner_id: String,
     pub x: f32,
     pub y: f32,
     pub rot: f32,
@@ -117,8 +113,8 @@ pub struct ProjectileStateDto {
 impl From<&ProjectileSnapshot> for ProjectileStateDto {
     fn from(projectile: &ProjectileSnapshot) -> Self {
         Self {
-            id: projectile.id,
-            owner_id: projectile.owner_id,
+            id: projectile.id.clone(),
+            owner_id: projectile.owner_id.clone(),
             x: projectile.x,
             y: projectile.y,
             rot: projectile.rot,

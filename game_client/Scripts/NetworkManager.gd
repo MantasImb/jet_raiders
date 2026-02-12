@@ -9,7 +9,6 @@ const TEST_SERVER_URL= "ws://127.0.0.1:3001/ws"
 # will be assigned when the head server provides the game server URL
 var game_server_url: String
 var lobby_id: String
-var local_player_id: int
 
 var game_socket: WebSocketPeer = WebSocketPeer.new()
 var connected: bool = false
@@ -100,8 +99,8 @@ func _handle_server_message(json_str: String) -> void:
 		"Identity":
 			# { "type": "Identity", "data": { "player_id": 123 } }
 			if msg.data.has("player_id"):
-				local_player_id = int(msg.data.player_id)
-				print("Assigned Player ID: ", local_player_id)
+				user.local_player_id = msg.data.player_id
+				print("Assigned Player ID: ", user.local_player_id)
 		"WorldUpdate":
 			# { "type": "WorldUpdate", "data": { "tick": 1, "entities": [...] } }
 			if msg.data.has("entities"):
@@ -122,7 +121,7 @@ func _handle_world_update(data: Dictionary) -> void:
 
 	for entity_data in entities:
 		# entity_data has: id, x, y, rot
-		var id = int(entity_data.id)
+		var id = entity_data.id
 		current_player_ids.append(id)
 		
 		if spawned_nodes.has_node(str(id)):

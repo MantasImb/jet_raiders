@@ -6,7 +6,7 @@ var network : NetworkManager
 const PROFILE_PATH = "user://guest_profile.json"
 const DEFAULT_DISPLAY_NAME = "Pilot"
 
-var local_player_id: int
+var local_player_id: String
 var auth_token: String
 
 # Local player info

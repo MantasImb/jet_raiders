@@ -275,7 +275,9 @@ async fn bootstrap_connection(
 
     // Send Identity Packet
     // Tell the client "This is who you are".
-    let identity_msg = ServerMessage::Identity { player_id };
+    let identity_msg = ServerMessage::Identity {
+        player_id: player_id.to_string(),
+    };
     if let Err(err) = send_message(socket, &identity_msg).await {
         // Ensure the player slot is freed if we fail the handshake early.
         lobby
