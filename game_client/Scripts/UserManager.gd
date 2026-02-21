@@ -113,8 +113,15 @@ func load_or_create_profile() -> void:
 				data = parsed
 
 	if data.has("guest_id"):
-		guest_id = str(data.guest_id).strip_edges()
-		print("Guest_id: ", guest_id)
+		var stored_guest_id := str(data.guest_id).strip_edges()
+		# Validate the persisted guest_id once at startup.
+		if _is_guest_id_valid(stored_guest_id):
+			guest_id = stored_guest_id
+			print("Guest_id: ", guest_id)
+		else:
+			push_warning("Invalid stored guest_id. Fetching a new guest identity.")
+			guest_id = ""
+			_init_guest_id()
 	else:
 		_init_guest_id()
 
@@ -225,3 +232,16 @@ func is_display_name_valid() -> bool:
 	var regex := RegEx.new()
 	regex.compile("^[A-Za-z0-9 _-]+$")
 	return regex.search(trimmed) != null
+
+func _is_guest_id_valid(value: String) -> bool:
+	var trimmed := value.strip_edges()
+	if trimmed.is_empty():
+		return false
+
+	# guest_id must be a positive numeric identifier issued by auth.
+	var regex := RegEx.new()
+	regex.compile("^[0-9]+$")
+	if regex.search(trimmed) == null:
+		return false
+
+	return int(trimmed) > 0
