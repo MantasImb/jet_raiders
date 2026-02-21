@@ -1,5 +1,8 @@
 use std::{
-    sync::{OnceLock, atomic::{AtomicU64, Ordering}},
+    sync::{
+        OnceLock,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{SystemTime, UNIX_EPOCH},
 };
 

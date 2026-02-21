@@ -18,6 +18,7 @@ rewrites.
 ## Goals
 
 - Issue short-lived guest session tokens that represent a `guest_id` identity.
+- Issue server-generated guest IDs for first-time users.
 - Provide token verification endpoints for other services.
 - Keep the API minimal and aligned with the head service integration model.
 - Preserve a straightforward upgrade path to Web3 auth.
@@ -32,6 +33,9 @@ rewrites.
 
 ### API Surface
 
+- `POST /auth/guest/init`
+  - Creates a guest identity for first-time users.
+  - Returns `guest_id`, session token, and expiry.
 - `POST /auth/guest`
   - Accepts `guest_id`, `display_name`, and optional metadata.
   - Returns a short-lived session token and expiry.
@@ -42,7 +46,7 @@ rewrites.
 
 ### Data Model (In-Memory MVP)
 
-- `guest_id`: string identifier from the client.
+- `guest_id`: canonical guest identifier issued by auth.
 - `display_name`: latest supplied name.
 - `session_id`: unique ID for each session.
 - `token_hash`: stored hash of the issued token.
@@ -50,6 +54,7 @@ rewrites.
 
 ### Service Responsibilities
 
+- Generate guest IDs with a server-controlled format.
 - Validate the guest payload (length/charset checks).
 - Issue and sign tokens (JWT or opaque token + server-side storage).
 - Provide verification for head, matchmaking, and game servers.
@@ -57,9 +62,29 @@ rewrites.
 
 ### Integration Steps
 
-1. Head service calls `POST /auth/guest` when a guest session is needed.
-2. Head service returns the token to the client or uses it server-to-server.
-3. Game server verifies token on join via `POST /auth/verify-token`.
+1. First-time login:
+   head calls `POST /auth/guest/init` and receives
+   `{ guest_id, token, expires_at }`.
+2. Returning login:
+   head calls `POST /auth/guest` with known `guest_id` and `display_name`.
+3. Head returns the token and guest ID to the client.
+4. Game server verifies token on join via `POST /auth/verify-token`.
+
+### Endpoint Semantics
+
+- Use `POST` for guest creation because it creates server state.
+- Do not use `GET` for guest creation to avoid accidental identity creation from
+  prefetchers/crawlers and to keep REST semantics clear.
+
+### Backward Compatibility Rollout
+
+1. Keep `POST /auth/guest` compatible with existing client-generated `guest_id`.
+2. Add `POST /auth/guest/init` and migrate head service to prefer it for
+   users without stored IDs.
+3. Update game client flow through head:
+   if no local `guest_id`, request one from head and persist it.
+4. After migration, tighten `POST /auth/guest` validation to accept only
+   server-issued guest IDs.
 
 ## Phase 2: Service Hardening
 
@@ -99,13 +124,16 @@ rewrites.
 ## Risks and Mitigations
 
 - **Guest spoofing**: Accept as a known limitation in Phase 1.
+- **Mixed identity issuance during migration**:
+  preserve compatibility first, then enforce server-issued IDs only.
 - **Token misuse**: Short expiry + server-side revocation in Phase 2.
 - **Replay attacks**: Nonce tracking and expiry in Phase 3.
 
 ## Milestones
 
 1. Guest auth endpoints implemented and documented.
-2. Head and game services use token verification.
-3. Durable storage + rate limits in place.
-4. Web3 nonce and signature verification added.
-5. Guest + Web3 sessions supported side-by-side.
+2. Guest init endpoint is used by head for first-time users.
+3. Head and game services use token verification.
+4. Durable storage + rate limits in place.
+5. Web3 nonce and signature verification added.
+6. Guest + Web3 sessions supported side-by-side.

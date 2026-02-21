@@ -1,6 +1,7 @@
 // Framework bootstrap for the game server runtime.
 
 use crate::frameworks::config;
+use crate::interface_adapters::clients::auth::AuthClient;
 use crate::interface_adapters::net::{create_lobby_handler, spawn_lobby_serializer, ws_handler};
 use crate::interface_adapters::state::AppState;
 use crate::use_cases::{LobbyRegistry, LobbySettings};
@@ -43,7 +44,7 @@ fn init_runtime() {
 pub async fn run(listener: tokio::net::TcpListener) -> Result<()> {
     let address = listener.local_addr()?;
     // build state
-    let state = build_state().await;
+    let state = build_state().await?;
     // Start the Web Server
     let app = Router::new()
         .route("/ws", get(ws_handler))
@@ -73,7 +74,17 @@ pub async fn run_with_config() -> Result<()> {
     run(listener).await
 }
 
-async fn build_state() -> Arc<AppState> {
+async fn build_state() -> Result<Arc<AppState>> {
+    let auth_base_url = config::auth_service_url();
+    let auth_verify_timeout = config::auth_verify_timeout();
+    let auth_client = AuthClient::new(auth_base_url.clone(), auth_verify_timeout)
+        .map_err(|e| std::io::Error::other(format!("failed to initialize auth client: {e}")))?;
+    tracing::debug!(
+        auth_base_url = %auth_base_url,
+        auth_verify_timeout_ms = auth_verify_timeout.as_millis(),
+        "auth client configured"
+    );
+
     // Setup Lobby Registry
     // This owns the set of active lobby world tasks.
     let lobby_registry = Arc::new(LobbyRegistry::new(LobbySettings {
@@ -101,8 +112,9 @@ async fn build_state() -> Arc<AppState> {
         test_lobby.server_state_tx.subscribe(),
     );
 
-    Arc::new(AppState {
+    Ok(Arc::new(AppState {
         lobby_registry,
         default_lobby_id: Arc::from(test_lobby_id.as_str()),
-    })
+        auth_client: Arc::new(auth_client),
+    }))
 }

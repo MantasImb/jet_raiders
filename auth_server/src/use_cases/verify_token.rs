@@ -4,7 +4,7 @@ use crate::domain::ports::{Clock, SessionStore};
 
 // Response returned by the token verification use case.
 pub struct VerifyTokenResponse {
-    pub guest_id: String,
+    pub user_id: u64,
     pub display_name: String,
     pub metadata: Option<serde_json::Value>,
     pub session_id: String,
@@ -42,7 +42,8 @@ where
 
 fn map_session(session: Session) -> VerifyTokenResponse {
     VerifyTokenResponse {
-        guest_id: session.guest_id,
+        // Canonical identity used by downstream services.
+        user_id: session.guest_id,
         display_name: session.display_name,
         metadata: session.metadata,
         session_id: session.session_id,

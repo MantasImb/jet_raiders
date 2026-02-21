@@ -1,6 +1,7 @@
 use crate::domain::errors::AuthError;
 use crate::interface_adapters::protocol::{
-    ErrorResponse, GuestLoginRequest, GuestLoginResponse, LogoutRequest, LogoutResponse,
+    ErrorResponse, GuestInitRequest, GuestInitResponse, GuestLoginRequest, GuestLoginResponse,
+    LogoutRequest, LogoutResponse,
     VerifyTokenRequest, VerifyTokenResponse,
 };
 use crate::interface_adapters::state::{
@@ -14,9 +15,60 @@ use crate::use_cases::logout::LogoutUseCase;
 use crate::use_cases::verify_token::VerifyTokenUseCase;
 use axum::{extract::State, http::StatusCode, Json};
 use tracing::warn;
+use uuid::Uuid;
 
 // Basic session lifetime for guest tokens (in seconds).
 const GUEST_SESSION_TTL_SECONDS: u64 = 60 * 60;
+
+// Handler for first-time guest identity creation.
+pub async fn guest_init(
+    State(state): State<AppState>,
+    Json(payload): Json<GuestInitRequest>,
+) -> Result<Json<GuestInitResponse>, (StatusCode, Json<ErrorResponse>)> {
+    // Generate a numeric guest id that stays stable for future sessions.
+    let guest_id = generate_guest_id();
+    let display_name = payload.display_name;
+    let metadata = payload.metadata;
+    let metadata_json = metadata
+        .as_ref()
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "{}".to_string());
+
+    let store = InMemorySessionStore {
+        sessions: state.sessions.clone(),
+    };
+    let use_case = GuestLoginUseCase {
+        clock: SystemClock,
+        store,
+        ttl_seconds: GUEST_SESSION_TTL_SECONDS,
+    };
+
+    let result = use_case
+        .execute(GuestLoginRequest {
+            guest_id,
+            display_name: display_name.clone(),
+            metadata,
+        })
+        .await
+        .map_err(|err| map_auth_error(err, AuthErrorContext::GuestInit))?;
+
+    // Best-effort persistence of the guest profile for downstream services.
+    let profile_store = PostgresGuestProfileStore {
+        db: state.db.clone(),
+    };
+    if let Err(err) = profile_store
+        .upsert_guest_profile(&guest_id.to_string(), &result.display_name, &metadata_json)
+        .await
+    {
+        warn!(error = %err, "failed to upsert guest profile");
+    }
+
+    Ok(Json(GuestInitResponse {
+        guest_id,
+        token: result.token,
+        expires_at: result.expires_at,
+    }))
+}
 
 // Handler for issuing a guest session token.
 pub async fn guest_login(
@@ -24,8 +76,7 @@ pub async fn guest_login(
     Json(payload): Json<GuestLoginRequest>,
 ) -> Result<Json<GuestLoginResponse>, (StatusCode, Json<ErrorResponse>)> {
     // Capture guest identity fields before moving the payload into the use case.
-    let guest_id = payload.guest_id.clone();
-    let display_name = payload.display_name.clone();
+    let guest_id = payload.guest_id;
     let metadata_json = payload
         .metadata
         .as_ref()
@@ -51,7 +102,7 @@ pub async fn guest_login(
         db: state.db.clone(),
     };
     if let Err(err) = profile_store
-        .upsert_guest_profile(&guest_id, &display_name, &metadata_json)
+        .upsert_guest_profile(&guest_id.to_string(), &result.display_name, &metadata_json)
         .await
     {
         warn!(error = %err, "failed to upsert guest profile");
@@ -82,7 +133,7 @@ pub async fn verify_token(
         .map_err(|err| map_auth_error(err, AuthErrorContext::VerifyToken))?;
 
     Ok(Json(VerifyTokenResponse {
-        guest_id: result.guest_id,
+        user_id: result.user_id,
         display_name: result.display_name,
         metadata: result.metadata,
         session_id: result.session_id,
@@ -122,6 +173,7 @@ fn error_response(status: StatusCode, message: &str) -> (StatusCode, Json<ErrorR
 
 // Maps domain errors to HTTP responses by endpoint context.
 enum AuthErrorContext {
+    GuestInit,
     GuestLogin,
     VerifyToken,
     Logout,
@@ -129,12 +181,25 @@ enum AuthErrorContext {
 
 fn map_auth_error(err: AuthError, context: AuthErrorContext) -> (StatusCode, Json<ErrorResponse>) {
     match context {
+        AuthErrorContext::GuestInit => match err {
+            AuthError::InvalidDisplayName => {
+                error_response(StatusCode::BAD_REQUEST, "invalid display_name")
+            }
+            AuthError::InvalidGuestId => {
+                error_response(StatusCode::BAD_GATEWAY, "failed to allocate guest_id")
+            }
+            AuthError::StorageFailure
+            | AuthError::InvalidToken
+            | AuthError::SessionExpired => {
+                error_response(StatusCode::BAD_GATEWAY, "storage error")
+            }
+        },
         AuthErrorContext::GuestLogin => match err {
             AuthError::InvalidGuestId => {
                 error_response(StatusCode::BAD_REQUEST, "guest_id is required")
             }
             AuthError::InvalidDisplayName => {
-                error_response(StatusCode::BAD_REQUEST, "display_name is required")
+                error_response(StatusCode::BAD_REQUEST, "invalid display_name")
             }
             AuthError::StorageFailure
             | AuthError::InvalidToken
@@ -159,5 +224,18 @@ fn map_auth_error(err: AuthError, context: AuthErrorContext) -> (StatusCode, Jso
             | AuthError::InvalidToken
             | AuthError::SessionExpired => error_response(StatusCode::BAD_REQUEST, "invalid token"),
         },
+    }
+}
+
+fn generate_guest_id() -> u64 {
+    // Use 64 bits from a v4 UUID to avoid adding a separate RNG dependency.
+    loop {
+        let bytes = Uuid::new_v4().into_bytes();
+        let candidate = u64::from_be_bytes([
+            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+        ]);
+        if candidate != 0 {
+            return candidate;
+        }
     }
 }

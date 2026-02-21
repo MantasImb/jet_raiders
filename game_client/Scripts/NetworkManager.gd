@@ -16,6 +16,7 @@ var connected: bool = false
 var reconnect_attempts: int = 0
 var reconnect_timer: Timer
 var reconnect_scheduled: bool = false
+var initial_ws_started: bool = false
 
 # Reconnect backoff settings (seconds).
 const RECONNECT_BASE_DELAY: float = 0.5
@@ -32,12 +33,24 @@ func _ready() -> void:
 	reconnect_timer.one_shot = true
 	reconnect_timer.timeout.connect(_on_reconnect_timeout)
 	add_child(reconnect_timer)
+
+	# Start websocket connection only after auth succeeds.
+	user.authenticated.connect(_on_user_authenticated)
 	
-	# Load or create a local guest profile before connecting.
-	if game_manager.TEST_MODE:
-		start_client(TEST_SERVER_URL)
+	# If auth is already available when this node starts, connect immediately.
+	if game_manager.TEST_MODE and user.is_authenticated:
+		_start_initial_ws()
 	
 func _process(_delta: float) -> void:
+	if user.authenticating:
+		return
+	
+	# Guard login on guest_id availability; calling login too early can cause
+	# repeated auth failures/noisy loops while guest init is still in flight.
+	if not user.is_authenticated and not user.guest_id.is_empty():
+		user.login()
+		return
+	
 	game_socket.poll()
 	var state = game_socket.get_ready_state()
 	
@@ -173,7 +186,20 @@ func _connected_to_server() -> void:
 	reconnect_attempts = 0
 	reconnect_scheduled = false
 	reconnect_timer.stop()
-	_send_join()
+	if user.is_authenticated:
+		_send_join()
+
+func _on_user_authenticated(_session_token: String) -> void:
+	if not game_manager.TEST_MODE:
+		return
+	_start_initial_ws()
+
+func _start_initial_ws() -> void:
+	# Guard against duplicate connect attempts from startup + signal timing.
+	if initial_ws_started:
+		return
+	initial_ws_started = true
+	start_client(TEST_SERVER_URL)
 
 func _connection_failed() -> void:
 	print("Connection failed")
@@ -191,13 +217,16 @@ func _server_closed() -> void:
 func _send_join() -> void:
 	if game_socket.get_ready_state() != WebSocketPeer.STATE_OPEN:
 		return
+
+	if user.auth_token.strip_edges().is_empty():
+		push_error("Missing auth token for join")
+		return
 	
-	# Send a minimal guest join payload for persistence.
+	# Send the auth session token for identity verification in game_server.
 	var message = {
 		"type": "Join",
 		"data": {
-			"guest_id": user.guest_id,
-			"display_name": user.local_username
+			"session_token": user.auth_token
 		}
 	}
 	var json_str = JSON.stringify(message)
@@ -206,6 +235,9 @@ func _send_join() -> void:
 func _schedule_reconnect(reason: String) -> void:
 	# Only auto-reconnect in test mode to avoid surprising players.
 	if not game_manager.TEST_MODE:
+		return
+	# Reconnect only after auth is established; otherwise wait for login flow.
+	if not user.is_authenticated:
 		return
 	# Avoid stacking multiple timers or reconnecting while already connecting/open.
 	var state = game_socket.get_ready_state()

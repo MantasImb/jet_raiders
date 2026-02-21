@@ -42,3 +42,6 @@ Fly your plane, shoot other players, and stay alive.
 
 - **HP**: Health points; when this reaches 0, you die.
 - **Projectile**: A shot fired from a plane that can damage other players.
+
+### Possible feature ideas
+- [ ] A passive skill for the shooting ability where another player dies if they get hit by 3 shots from a player.
