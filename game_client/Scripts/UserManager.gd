@@ -112,24 +112,29 @@ func load_or_create_profile() -> void:
 			if typeof(parsed) == TYPE_DICTIONARY:
 				data = parsed
 
+	if data.has("display_name"):
+		local_username = str(data.display_name)
+	else:
+		local_username = DEFAULT_DISPLAY_NAME
+
 	if data.has("guest_id"):
 		var stored_guest_id := str(data.guest_id).strip_edges()
 		# Validate the persisted guest_id once at startup.
 		if _is_guest_id_valid(stored_guest_id):
 			guest_id = stored_guest_id
 			print("Guest_id: ", guest_id)
+			_finish_profile_setup()
 		else:
 			push_warning("Invalid stored guest_id. Fetching a new guest identity.")
 			guest_id = ""
 			_init_guest_id()
+			return
 	else:
 		_init_guest_id()
+		return
 
-	if data.has("display_name"):
-		local_username = str(data.display_name)
-	else:
-		local_username = DEFAULT_DISPLAY_NAME
-
+func _finish_profile_setup() -> void:
+	# Complete startup wiring only after guest identity is resolved for init paths.
 	username_input.text = local_username
 	_save_profile()
 
@@ -166,7 +171,6 @@ func _init_guest_id() -> void:
 				return
 
 			var text : String = body.get_string_from_utf8()
-
 			var parsed : Variant = JSON.parse_string(text)
 			if typeof(parsed) != TYPE_DICTIONARY:
 				push_error("Invalid JSON response")
@@ -177,13 +181,14 @@ func _init_guest_id() -> void:
 				push_error("Missing guest_id")
 				return
 
-			guest_id = str(json.guest_id).strip_edges()
-			if guest_id.is_empty():
-				push_error("Empty guest_id")
+			var resolved_guest_id := str(json.guest_id).strip_edges()
+			if !_is_guest_id_valid(resolved_guest_id):
+				push_error("Invalid guest_id")
 				return
 
+			guest_id = resolved_guest_id
 			print("Acquired guest id: ", guest_id)
-			_save_profile()
+			_finish_profile_setup()
 	)
 	
 	
