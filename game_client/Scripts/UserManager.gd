@@ -7,6 +7,7 @@ var network : NetworkManager
 
 const PROFILE_PATH = "user://guest_profile.json"
 const DEFAULT_DISPLAY_NAME = "Pilot"
+const MAX_U64 = "18446744073709551615"
 
 var local_player_id: String
 var auth_token: String
@@ -205,7 +206,6 @@ func _init_guest_id() -> void:
 	]
 	
 	var url = NetworkManager.HEAD_BASE_URL + "/guest/init"
-	#var url = "http://127.0.0.1:3000/guest/login"
 	
 	print("Trying to init user on url: ", url)
 	print(payload)
@@ -245,8 +245,17 @@ func _is_guest_id_valid(value: String) -> bool:
 
 	# guest_id must be a positive numeric identifier issued by auth.
 	var regex := RegEx.new()
-	regex.compile("^[0-9]+$")
+	regex.compile("^(0|[1-9][0-9]*)$")
 	if regex.search(trimmed) == null:
 		return false
 
-	return int(trimmed) > 0
+	if trimmed == "0":
+		return false
+
+	if trimmed.length() < MAX_U64.length():
+		return true
+
+	if trimmed.length() > MAX_U64.length():
+		return false
+
+	return trimmed <= MAX_U64
