@@ -27,11 +27,10 @@ pub enum ClientMessage {
     Input(PlayerInputDto),
 }
 
-/// Payload for the Join handshake with identity metadata.
+/// Payload for the Join handshake with a session token.
 #[derive(Debug, Clone, Deserialize)]
 pub struct JoinPayload {
-    pub guest_id: String,
-    pub display_name: String,
+    pub session_token: String,
 }
 
 /// Per-tick input payload sent by the client after joining.

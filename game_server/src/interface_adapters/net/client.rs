@@ -1,4 +1,5 @@
 use crate::domain::PlayerInput;
+use crate::interface_adapters::clients::auth::{AuthClient, VerifyTokenError};
 use crate::interface_adapters::http::ErrorResponse;
 use crate::interface_adapters::protocol::{
     ClientMessage, PlayerInputDto, ServerMessage, WorldUpdateDto,
@@ -23,6 +24,7 @@ use std::{
 };
 use tokio::sync::watch::Receiver;
 use tokio::sync::{Notify, broadcast, mpsc, watch};
+use tokio::time::timeout;
 use tracing::{debug, error, info, info_span, warn};
 
 #[derive(Debug)]
@@ -35,6 +37,10 @@ enum NetError {
     InputClosed,
     WorldUpdatesClosed,
     ServerStateClosed,
+    JoinRequired,
+    JoinTimeout,
+    AuthVerify,
+    ClosedBeforeJoin,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -42,9 +48,6 @@ pub struct LobbyQuery {
     // The lobby id the client wants to join.
     #[serde(default)]
     lobby_id: Option<String>,
-    // Optional player id when the client has a preassigned identity.
-    #[serde(default)]
-    player_id: Option<u64>,
 }
 
 pub async fn world_update_serializer(
@@ -124,14 +127,15 @@ pub async fn ws_handler(
     };
 
     let lobby_registry = state.lobby_registry.clone();
-    ws.on_upgrade(move |socket| handle_socket(socket, lobby, query.player_id, lobby_registry))
+    let auth_client = state.auth_client.clone();
+    ws.on_upgrade(move |socket| handle_socket(socket, lobby, lobby_registry, auth_client))
 }
 
 async fn handle_socket(
     mut socket: WebSocket,
     lobby: LobbyHandle,
-    requested_player_id: Option<u64>,
     lobby_registry: Arc<LobbyRegistry>,
+    auth_client: Arc<AuthClient>,
 ) {
     // Separate connection id for correlating logs before/after a player_id exists.
     let conn_id = rand_id();
@@ -141,12 +145,16 @@ async fn handle_socket(
     let mut ctx = match bootstrap_connection(
         &mut socket,
         &lobby,
-        requested_player_id,
         lobby_registry.clone(),
+        auth_client,
     )
     .await
     {
         Ok(ctx) => ctx,
+        Err(NetError::ClosedBeforeJoin) => {
+            info!("client disconnected before join handshake");
+            return;
+        }
         Err(e) => {
             error!(error = ?e, "failed to bootstrap connection");
             let _ = socket
@@ -193,7 +201,12 @@ async fn handle_socket(
     ctx.registered = true;
 
     span.record("player_id", ctx.player_id);
-    info!("client connected");
+    info!(
+        player_id = ctx.player_id,
+        session_id = %ctx.session_id,
+        display_name = %ctx.display_name,
+        "client connected"
+    );
 
     // Main Client Loop
     if let Err(e) = run_client_loop(&mut socket, &mut ctx).await {
@@ -215,6 +228,8 @@ async fn send_message(socket: &mut WebSocket, msg: &ServerMessage) -> Result<usi
 
 struct ConnCtx {
     pub player_id: u64,
+    pub session_id: String,
+    pub display_name: String,
     // Lobby id this connection is attached to.
     pub lobby_id: Arc<str>,
     // Registry access for connection lifecycle updates.
@@ -232,9 +247,6 @@ struct ConnCtx {
     pub world_latest_rx: watch::Receiver<Utf8Bytes>,
     pub server_state_rx: watch::Receiver<ServerState>,
     pub can_spawn: bool,
-    pub guest_id: Option<String>,
-    pub display_name: Option<String>,
-    pub has_joined: bool,
     // Count lag recovery snapshots sent to this client.
     pub lag_recovery_count: u64,
 
@@ -252,21 +264,43 @@ struct ConnCtx {
     pub close_frame: Option<CloseFrame>,
 }
 
+#[derive(Debug)]
+struct JoinHandshake {
+    player_id: u64,
+    session_id: String,
+    display_name: String,
+    bytes_in: u64,
+    msgs_in: u64,
+}
+
 async fn bootstrap_connection(
     socket: &mut WebSocket,
     lobby: &LobbyHandle,
-    requested_player_id: Option<u64>,
     lobby_registry: Arc<LobbyRegistry>,
+    auth_client: Arc<AuthClient>,
 ) -> Result<ConnCtx, NetError> {
     // Subscribe to updates *before* doing anything else (awaits) to not miss packets.
     let world_bytes_rx = lobby.world_bytes_tx.subscribe();
     let world_latest_rx = lobby.world_latest_tx.subscribe();
     let server_state_rx = lobby.server_state_tx.subscribe();
 
+    // Authenticate the very first meaningful client message before assigning player ownership.
+    let join = match timeout(
+        JOIN_HANDSHAKE_TIMEOUT,
+        read_join_handshake(socket, auth_client.as_ref()),
+    )
+    .await
+    {
+        Ok(result) => result?,
+        Err(_) => {
+            let _ = send_close_with_reason(socket, close_code::POLICY, "join timeout").await;
+            return Err(NetError::JoinTimeout);
+        }
+    };
+    let player_id = join.player_id;
+
     // Handshake & ID Assignment
-    // If an upstream service assigns player ids, prefer it; otherwise generate one locally.
-    // `rand_id()` is process-unique and monotonic, so IDs won't collide within a running server.
-    let player_id = requested_player_id.unwrap_or_else(rand_id);
+    // Player identity is the canonical verified user id from auth.
     // Track this connection with a unique token so newer connections can replace it.
     let player_conn_token = rand_id();
     let player_conn_shutdown = lobby
@@ -329,6 +363,8 @@ async fn bootstrap_connection(
     let now = Instant::now() - LOG_THROTTLE;
     Ok(ConnCtx {
         player_id,
+        session_id: join.session_id,
+        display_name: join.display_name,
         lobby_id: lobby.lobby_id.clone(),
         lobby_registry,
         lobby: lobby.clone(),
@@ -340,14 +376,11 @@ async fn bootstrap_connection(
         server_state_rx,
         input_tx: lobby.input_tx.clone(),
         can_spawn,
-        guest_id: None,
-        display_name: None,
-        has_joined: false,
         lag_recovery_count: 0,
 
-        msgs_in: 0,
+        msgs_in: join.msgs_in,
         msgs_out: 0,
-        bytes_in: 0,
+        bytes_in: join.bytes_in,
         bytes_out: 0,
 
         invalid_json: 0,
@@ -367,9 +400,113 @@ enum LoopControl {
 
 const LOG_THROTTLE: Duration = Duration::from_secs(2);
 const MAX_INVALID_JSON: u32 = 10;
-const MAX_GUEST_ID_LEN: usize = 64;
-const MAX_DISPLAY_NAME_LEN: usize = 32;
-const DEFAULT_DISPLAY_NAME: &str = "Pilot";
+const MAX_SESSION_TOKEN_LEN: usize = 4096;
+const JOIN_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
+
+async fn send_close_with_reason(
+    socket: &mut WebSocket,
+    code: u16,
+    reason: &'static str,
+) -> Result<(), NetError> {
+    socket
+        .send(Message::Close(Some(CloseFrame {
+            code,
+            reason: reason.into(),
+        })))
+        .await
+        .map_err(NetError::Ws)?;
+    socket.close().await.map_err(NetError::Ws)
+}
+
+async fn read_join_handshake(
+    socket: &mut WebSocket,
+    auth_client: &AuthClient,
+) -> Result<JoinHandshake, NetError> {
+    loop {
+        let Some(incoming) = socket.recv().await else {
+            return Err(NetError::ClosedBeforeJoin);
+        };
+
+        let message = incoming.map_err(NetError::Ws)?;
+        match message {
+            Message::Text(text) => {
+                let bytes_in = text.len() as u64;
+                let parsed = serde_json::from_str::<ClientMessage>(&text);
+                let payload = match parsed {
+                    Ok(ClientMessage::Join(payload)) => payload,
+                    Ok(ClientMessage::Input(_)) => {
+                        let _ = send_close_with_reason(socket, close_code::POLICY, "join required")
+                            .await;
+                        return Err(NetError::JoinRequired);
+                    }
+                    Err(_) => {
+                        let _ = send_close_with_reason(
+                            socket,
+                            close_code::POLICY,
+                            "invalid join payload",
+                        )
+                        .await;
+                        return Err(NetError::JoinRequired);
+                    }
+                };
+
+                let session_token = payload.session_token.trim();
+                if session_token.is_empty() || session_token.len() > MAX_SESSION_TOKEN_LEN {
+                    let _ =
+                        send_close_with_reason(socket, close_code::POLICY, "invalid session token")
+                            .await;
+                    return Err(NetError::AuthVerify);
+                }
+
+                let identity = match auth_client.verify_token(session_token).await {
+                    Ok(identity) => identity,
+                    Err(VerifyTokenError::InvalidToken) => {
+                        let _ = send_close_with_reason(
+                            socket,
+                            close_code::POLICY,
+                            "invalid session token",
+                        )
+                        .await;
+                        return Err(NetError::AuthVerify);
+                    }
+                    Err(VerifyTokenError::SessionExpired) => {
+                        let _ =
+                            send_close_with_reason(socket, close_code::POLICY, "session expired")
+                                .await;
+                        return Err(NetError::AuthVerify);
+                    }
+                    Err(VerifyTokenError::UpstreamUnavailable) => {
+                        let _ =
+                            send_close_with_reason(socket, close_code::ERROR, "auth unavailable")
+                                .await;
+                        return Err(NetError::AuthVerify);
+                    }
+                };
+                let _token_expires_at = identity.expires_at;
+
+                return Ok(JoinHandshake {
+                    player_id: identity.user_id,
+                    session_id: identity.session_id,
+                    display_name: identity.display_name,
+                    // Token expiry is enforced only at join to avoid mid-round disconnects.
+                    bytes_in,
+                    msgs_in: 1,
+                });
+            }
+            Message::Binary(_) => {
+                let _ = send_close_with_reason(
+                    socket,
+                    close_code::UNSUPPORTED,
+                    "binary messages not supported",
+                )
+                .await;
+                return Err(NetError::JoinRequired);
+            }
+            Message::Ping(_) | Message::Pong(_) => {}
+            Message::Close(_) => return Err(NetError::ClosedBeforeJoin),
+        }
+    }
+}
 
 fn should_log(last: &mut Instant) -> bool {
     if last.elapsed() >= LOG_THROTTLE {
@@ -434,9 +571,6 @@ async fn run_client_loop(socket: &mut WebSocket, ctx: &mut ConnCtx) -> Result<()
         world_latest_rx,
         server_state_rx,
         can_spawn,
-        guest_id,
-        display_name,
-        has_joined,
         lag_recovery_count,
         msgs_in,
         msgs_out,
@@ -463,9 +597,6 @@ async fn run_client_loop(socket: &mut WebSocket, ctx: &mut ConnCtx) -> Result<()
                     player_id,
                     input_tx,
                     *can_spawn,
-                    guest_id,
-                    display_name,
-                    has_joined,
                     msgs_in,
                     bytes_in,
                     invalid_json,
@@ -606,9 +737,6 @@ async fn handle_incoming_ws(
     player_id: u64,
     input_tx: &mpsc::Sender<GameEvent>,
     can_spawn: bool,
-    guest_id: &mut Option<String>,
-    display_name: &mut Option<String>,
-    has_joined: &mut bool,
     msgs_in: &mut u64,
     bytes_in: &mut u64,
     invalid_json: &mut u32,
@@ -623,46 +751,14 @@ async fn handle_incoming_ws(
                 *bytes_in += text.len() as u64;
 
                 match serde_json::from_str::<ClientMessage>(&text) {
-                    Ok(ClientMessage::Join(payload)) => {
-                        // Join is the only time we accept identity metadata for a connection.
-                        let guest = payload.guest_id.trim();
-                        let guest_value = if guest.is_empty() || guest.len() > MAX_GUEST_ID_LEN {
-                            // Keep join non-fatal; auth is handled by upstream services.
-                            if should_log(last_invalid_input_log) {
-                                warn!(player_id, "invalid guest_id on join; ignoring");
-                            }
-                            None
-                        } else {
-                            Some(guest.to_string())
-                        };
-
-                        let mut name = payload.display_name.trim();
-                        if name.is_empty() {
-                            name = DEFAULT_DISPLAY_NAME;
+                    Ok(ClientMessage::Join(_)) => {
+                        // Ignore repeated Join packets after bootstrap to keep the session stable.
+                        if should_log(last_invalid_input_log) {
+                            warn!(player_id, "duplicate join ignored");
                         }
-                        let name_value = if name.len() > MAX_DISPLAY_NAME_LEN {
-                            // Avoid disconnecting on oversized names; fall back to default.
-                            if should_log(last_invalid_input_log) {
-                                warn!(player_id, "display name too long; defaulting");
-                            }
-                            Some(DEFAULT_DISPLAY_NAME.to_string())
-                        } else {
-                            Some(name.to_string())
-                        };
-
-                        *guest_id = guest_value;
-                        *display_name = name_value;
-                        *has_joined = true;
                         Ok(LoopControl::Continue)
                     }
                     Ok(ClientMessage::Input(input)) => {
-                        if !*has_joined {
-                            if should_log(last_invalid_input_log) {
-                                warn!(player_id, "received input before join");
-                            }
-                            return Ok(LoopControl::Continue);
-                        }
-
                         if !can_spawn {
                             // Spectators cannot control ships in the lobby.
                             if should_log(last_invalid_input_log) {

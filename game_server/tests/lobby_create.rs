@@ -1,6 +1,5 @@
 mod support;
 
-// TODO: figure out how to start the server before running the test suite.
 // TODO: test the full response of the lobby creation request
 
 #[tokio::test]
