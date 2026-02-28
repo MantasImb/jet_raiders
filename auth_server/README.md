@@ -2,89 +2,203 @@
 
 ## Purpose
 
-The auth service is the source of truth for player identity. It validates login
-proofs (wallet signatures or other identity proofs), issues short-lived session
-tokens, and exposes verification endpoints for other services.
+The auth service is the source of truth for session identity in the current
+backend. Right now it implements a guest-only auth flow and provides token
+verification for downstream services.
 
-## Architecture Guidelines
+## Current Scope
 
-Follow `CLEAN_ARCHITECTURE_GUIDELINES.md` and the service plan in
-`auth_server/ARCHITECTURE.md`.
+Implemented today:
 
-## Responsibilities
+- Create first-time guest identities.
+- Issue short-lived guest session tokens.
+- Verify guest session tokens.
+- Revoke guest session tokens.
+- Persist guest profile data to Postgres.
 
-- Issue nonces for login challenges.
-- Validate signed login payloads.
-- Create and rotate short-lived session tokens.
-- Provide token verification for matchmaking and game servers.
-- Support logout and token revocation.
-- Enforce rate limits and audit logging for auth events.
+Not implemented yet:
 
-## Client Access Pattern
+- Wallet nonce/signature login (`/auth/nonce`, `/auth/verify`).
+- Durable session storage (sessions are currently in-memory).
 
-The auth service is intended to be consumed by the head service. The game
-client should normally call the head service for login and session workflows,
-while the head service calls the auth service to issue or verify tokens. Direct
-client-to-auth access can remain optional for dedicated launcher flows, but the
-default posture is to keep auth behind the head service for consistency and to
-avoid exposing identity endpoints directly to the game client.
+## Architecture
 
-## Current Axum Server Functionality to Extract
+Follow repository and service architecture rules:
 
-- Replace the current random player ID assignment during WebSocket bootstrap
-  with an auth-derived identity binding so player IDs map to verified sessions.
-- Own the session validation that the server currently leaves as a TODO in the
-  WebSocket handshake path.
-- Issue guest session tokens as a bridge from the current guest flow so game
-  servers can transition from `guest_id` usage to verified session identities.
+- `CLEAN_ARCHITECTURE_GUIDELINES.md`
+- `auth_server/ARCHITECTURE.md`
 
-## External Interfaces
+Code is split into clean architecture layers:
 
-### HTTP API
+- `domain/`: entities, errors, and ports.
+- `use_cases/`: guest login, token verify, logout.
+- `interface_adapters/`: HTTP DTOs, handlers, routes, app state.
+- `frameworks/`: server bootstrap and database wiring.
 
-- `POST /auth/nonce`
-  - Returns a one-time nonce and expiry.
-- `POST /auth/verify`
-  - Validates signature + nonce.
-  - Returns a session token (cookie or JWT).
-- `POST /auth/logout`
-  - Invalidates the current session token.
-- `POST /auth/verify-token`
-  - Validates a token and returns the user identity payload.
+## HTTP API
 
-## Data Contracts
+Base URL (local): `http://127.0.0.1:3002`
 
-### Session Token (JWT or opaque token)
+### `POST /auth/guest/init`
 
-- `sub`: user ID or wallet address.
-- `iat`: issued-at timestamp.
-- `exp`: expiration timestamp.
-- `aud`: intended audience (matchmaking, game-server).
-- `jti`: unique token ID for revocation.
+Creates a new `guest_id`, issues a token, and persists the guest profile.
 
-### Auth Verification Response
+Request:
 
-- `user_id`: canonical user ID.
-- `wallet_address`: optional wallet address.
-- `session_id`: server-side session ID.
-- `expires_at`: token expiry timestamp.
+```json
+{
+  "display_name": "Pilot_42",
+  "metadata": { "region": "eu" }
+}
+```
 
-## Security Considerations
+Success response:
 
-- Enforce nonce expiry and one-time usage.
-- Require TLS for all auth endpoints.
-- Keep tokens short-lived and rotate on refresh.
-- Store only token hashes for revocation checks.
-- Include correlation IDs for tracing across services.
+```json
+{
+  "guest_id": 123456789,
+  "token": "uuid-token",
+  "expires_at": 1700003600
+}
+```
 
-## Dependencies
+Validation:
 
-- Identity verification library (wallet signature validation or OAuth).
-- Secure random generator for nonces.
-- Data store for nonce/session persistence.
+- `display_name` length must be `3..=32` characters.
+- Allowed chars: ASCII letters, digits, space, `_`, `-`.
+- No leading/trailing whitespace.
+- `guest_id` is exposed as an unsigned 64-bit integer (`u64`).
 
-## Observability
+### `POST /auth/guest`
 
-- Log auth events with correlation IDs.
-- Track invalid signature attempts and throttle.
-- Emit metrics for login success/failure rates.
+Issues a token for an existing guest identity.
+
+Request:
+
+```json
+{
+  "guest_id": 123456789,
+  "display_name": "Pilot_42",
+  "metadata": { "region": "eu" }
+}
+```
+
+Success response:
+
+```json
+{
+  "token": "uuid-token",
+  "expires_at": 1700003600
+}
+```
+
+Validation:
+
+- `guest_id` must be non-zero.
+- `display_name` uses the same validation rules as `/auth/guest/init`.
+- `guest_id` is exposed as an unsigned 64-bit integer (`u64`).
+
+### `POST /auth/verify-token`
+
+Validates a token and returns the identity/session payload.
+
+Request:
+
+```json
+{
+  "token": "uuid-token"
+}
+```
+
+Success response:
+
+```json
+{
+  "user_id": 123456789,
+  "display_name": "Pilot_42",
+  "metadata": { "region": "eu" },
+  "session_id": "uuid-session-id",
+  "expires_at": 1700003600
+}
+```
+
+Failure cases:
+
+- `401 invalid session token`
+- `401 session expired`
+
+### `POST /auth/logout`
+
+Revokes a token.
+
+Request:
+
+```json
+{
+  "token": "uuid-token"
+}
+```
+
+Success response:
+
+```json
+{
+  "revoked": true
+}
+```
+
+`revoked` is `false` when the token is unknown.
+
+## Error Envelope
+
+Domain and validation errors are returned as:
+
+```json
+{
+  "message": "invalid display_name"
+}
+```
+
+## Runtime and Configuration
+
+Required environment variable:
+
+- `DATABASE_URL`: Postgres connection string.
+
+Optional environment variables:
+
+- `RUST_LOG`: tracing filter (defaults to `info`).
+- `LOG_FORMAT=json`: enables JSON logs.
+
+Server bind:
+
+- `0.0.0.0:3002`
+
+Session details:
+
+- TTL: `3600` seconds (1 hour).
+- Session storage: in-memory `HashMap`.
+
+## Database
+
+On startup, the service runs migrations from `auth_server/migrations`.
+
+Current schema stores guest profile snapshots:
+
+- `guest_profiles(guest_id TEXT PRIMARY KEY, display_name TEXT, metadata TEXT)`
+
+Type note:
+
+- API canonical type is numeric `u64`.
+- `guest_profiles.guest_id` is stored as `TEXT` using the decimal string form
+  of that same numeric ID.
+
+Guest profile persistence is best-effort and does not block token issuance.
+
+## Testing
+
+Route and use-case tests live in the service source files. Run:
+
+```bash
+cargo test -p auth_server
+```

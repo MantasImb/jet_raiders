@@ -1,35 +1,36 @@
 # Tracing (Jet Raiders)
 
-This document defines **how** and **where** tracing is implemented in Jet Raiders
-so that bugs and crashes can be pinpointed quickly.
+This document defines how and where tracing is implemented in Jet Raiders so
+bugs and crashes can be diagnosed quickly.
 
-For an in-depth implementation guide, see `TRACING_DEEP_DIVE.md`.
+The design follows common production patterns in Rust:
 
-The design is intentionally based on widely adopted production patterns in Rust:
-
-- `tracing` events with **structured fields** (not string parsing)
-- **spans** for long-lived context (connection, world loop)
-- an `EnvFilter` (`RUST_LOG`) for runtime control
-- optional **JSON logs** for easy ingestion in log tooling
+- `tracing` events with structured fields (not string parsing)
+- spans for long-lived context (connection lifecycle)
+- `EnvFilter` (`RUST_LOG`) for runtime control
+- optional JSON logs for ingestion by log tooling
 
 ## Goals
 
-1. **Fast root-cause**: every error log should include the minimum identifiers
-   needed to find the responsible player/connection/tick.
-2. **Correlation**: logs must be groupable by a stable identifier (e.g. `conn_id`,
-   `player_id`).
-3. **Safety**: do not log secrets or unbounded payloads.
-4. **Low noise**: avoid spam in hot loops; use levels and sampling.
+1. Fast root-cause: every error log should include identifiers needed to locate
+   the responsible player/connection/tick.
+2. Correlation: logs must be groupable by stable identifiers (for example
+   `conn_id`, `player_id`, `lobby_id`).
+3. Safety: do not log secrets or unbounded payloads.
+4. Low noise: avoid spam in hot paths by using levels and throttled warnings.
 
 ## Where tracing lives (Clean Architecture alignment)
 
-Tracing is an *outer-layer concern*.
+Tracing is an outer-layer concern.
 
-- ✅ Allowed: `game_server/src/frameworks/server.rs`,
-  `game_server/src/interface_adapters/net.rs`,
-  `game_server/src/use_cases/game.rs`
-- 🚫 Avoid in domain: `game_server/src/domain/state.rs`,
-  `game_server/src/domain/systems/*`
+- Allowed:
+  - `game_server/src/frameworks/server.rs`
+  - `game_server/src/interface_adapters/net/client.rs`
+  - `game_server/src/interface_adapters/net/internal.rs`
+  - `game_server/src/use_cases/game.rs`
+- Avoid in domain:
+  - `game_server/src/domain/state.rs`
+  - `game_server/src/domain/systems/*`
 
 Rule: domain code should not be forced to depend on a logging framework.
 
@@ -39,99 +40,61 @@ Rule: domain code should not be forced to depend on a logging framework.
 
 File: `game_server/src/frameworks/server.rs`
 
-Principles:
+Current behavior:
 
-- Initialize tracing once at process startup.
-- Use `RUST_LOG` for dynamic verbosity control.
-- Optional JSON output via `LOG_FORMAT=json`.
-- Install a panic hook to emit a final structured error event.
-
-Key snippet:
-
-```rust
-fn init_tracing() {
-    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
-
-    let json = matches!(std::env::var("LOG_FORMAT").as_deref(), Ok("json"));
-    if json {
-        tracing_subscriber::fmt()
-            .with_env_filter(filter)
-            .with_target(false)
-            .json()
-            .with_current_span(true)
-            .init();
-    } else {
-        tracing_subscriber::fmt()
-            .with_env_filter(filter)
-            .with_target(false)
-            .compact()
-            .init();
-    }
-
-    std::panic::set_hook(Box::new(|info| {
-        let backtrace = std::backtrace::Backtrace::capture();
-        tracing::error!(%info, ?backtrace, "panic");
-    }));
-}
-```
+- Tracing is initialized once during startup (`init_runtime()`).
+- `RUST_LOG` controls filtering through `EnvFilter`.
+- `LOG_FORMAT=json` enables JSON output.
+- Panic hook logs panic info and backtrace as a structured error event.
 
 ### 2) Connection lifecycle spans (network adapter)
 
-File: `game_server/src/interface_adapters/net.rs`
+File: `game_server/src/interface_adapters/net/client.rs`
 
-Principles:
+Current behavior:
 
-- Create a **connection span** immediately on upgrade.
-- Use `conn_id` to correlate pre-auth / pre-identity logs.
-- Record `player_id` into the span after the Identity handshake.
+- A connection span is created immediately on upgrade.
+- `conn_id` is available before identity is known.
+- `player_id` is recorded into the span after successful join/auth handshake.
+- Disconnect cleanup emits per-connection stats at `debug`.
 
-Key snippet:
+Representative snippet:
 
 ```rust
 let conn_id = rand_id();
 let span = info_span!("conn", conn_id, player_id = tracing::field::Empty);
 let _enter = span.enter();
-
-// ... bootstrap assigns player_id ...
 span.record("player_id", ctx.player_id);
 ```
 
-Errors should log:
+Tracked connection stats:
 
-- `conn_id`
-- `player_id` (if known)
-- `error` details
-- relevant counts (e.g. `bytes`, `missed`)
+- `msgs_in`
+- `msgs_out`
+- `bytes_in`
+- `bytes_out`
+- `invalid_json`
+- `lag_recovery_count`
 
-### 3) World task events (game loop)
+### 3) World and lobby lifecycle events
 
-File: `game_server/src/use_cases/game.rs`
+Files:
 
-Principles:
+- `game_server/src/use_cases/game.rs`
+- `game_server/src/interface_adapters/net/client.rs`
 
-- Log coarse lifecycle events at `info` (join/leave, state transitions).
-- Log unusual situations at `warn` (lag, dropped inputs).
-- Keep per-tick logging at `debug/trace` only.
+Current behavior:
 
-Examples:
+- `info` for lifecycle milestones (listen, connect/disconnect, join/leave).
+- `warn` for suspicious recoverable behavior (lagged updates, invalid input,
+  full input channels).
+- warning logs in hot paths are rate-limited with a shared throttle window.
 
-- Player join/leave:
+Representative snippet:
 
 ```rust
 info!(player_id, "player joined");
 info!(player_id, "player left");
-```
-
-- Projectile hit (currently no health system; this is for debugging/correlation):
-
-```rust
-info!(
-    victim_id = e.id,
-    shooter_id = p.owner_id,
-    projectile_id = p.id,
-    "player hit"
-);
 ```
 
 ## Rules and conventions (non-negotiable)
@@ -152,35 +115,34 @@ tracing::info!(player_id, "client disconnected");
 
 ### Do not log unbounded payloads
 
-- Do not log full JSON payloads in error paths.
-- Prefer `bytes = payload.len()` and the parse error.
+- Do not log full client payloads in parse/auth error paths.
+- Prefer bounded metadata like `bytes = text.len()` and an error summary.
 
 ### Levels
 
-- `error`: unrecoverable errors, panics, task exits that impact gameplay
-- `warn`: recoverable but suspicious (lagged broadcasts, dropped input)
-- `info`: lifecycle milestones (listen, connect/disconnect, join/leave, hits)
-- `debug`: useful for local debugging (non-text ws messages)
-- `trace`: extremely verbose (tick-level instrumentation)
+- `error`: unrecoverable errors, panics, startup/bind failures
+- `warn`: recoverable but suspicious conditions (lag, dropped input, parse noise)
+- `info`: lifecycle milestones
+- `debug`: connection stats and verbose diagnostics
+- `trace`: very high-volume instrumentation, only for focused local debugging
 
 ### No tracing setup outside bootstrap
 
-- No `tracing_subscriber` usage outside `game_server/src/frameworks/server.rs`.
+- No `tracing_subscriber` usage outside
+  `game_server/src/frameworks/server.rs`.
 
 ## Operational usage
 
-### Recommended local defaults
-
-Compact logs:
+Recommended local defaults:
 
 ```bash
 RUST_LOG=info cargo run
 ```
 
-More detail for debugging networking:
+More detail for networking:
 
 ```bash
-RUST_LOG=server=debug cargo run
+RUST_LOG=game_server::interface_adapters::net::client=debug cargo run
 ```
 
 JSON logs:
@@ -195,9 +157,9 @@ Backtraces on panic:
 RUST_BACKTRACE=1 RUST_LOG=info cargo run
 ```
 
-## What to add next (planned)
+## Next additions (planned)
 
-- Per-connection counters (messages in/out, bytes in/out).
-- Tick timing metrics (`tick_ms`) with sampling.
-- A `lobby_id` span once lobbies are wired in.
-- OpenTelemetry export once we need distributed tracing.
+- Tick timing telemetry (`tick_ms`) with sampling.
+- Add `lobby_id` as a span field on connection spans.
+- Optionally emit periodic aggregate counters per lobby.
+- Evaluate OpenTelemetry export when cross-service correlation is needed.
