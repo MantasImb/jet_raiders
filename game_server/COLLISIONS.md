@@ -53,7 +53,9 @@ if e.id == p.owner_id {
 
 When a hit is detected, we:
 
-1. emit a structured `tracing::info!` hit event
+1. emit a structured `tracing::info!` hit event (this is a narrow, intentional
+   exception to the general “avoid tracing in domain systems” guidance in
+   `TRACING.md`, and may be revisited later)
 2. mark the projectile for despawn by setting `p.ttl = 0.0`
 3. remove it in the `retain` pass
 
