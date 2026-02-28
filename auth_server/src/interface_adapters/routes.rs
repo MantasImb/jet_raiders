@@ -55,10 +55,7 @@ mod tests {
             ))
             .expect("expected request to build");
 
-        let response = app
-            .oneshot(request)
-            .await
-            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
@@ -80,10 +77,7 @@ mod tests {
             .body(Body::from(r#"{"token":"missing-token"}"#))
             .expect("expected request to build");
 
-        let response = app
-            .oneshot(request)
-            .await
-            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
 
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 
@@ -105,10 +99,7 @@ mod tests {
             .body(Body::from(r#"{"token":"unknown-token"}"#))
             .expect("expected request to build");
 
-        let response = app
-            .oneshot(request)
-            .await
-            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
 

@@ -54,52 +54,8 @@ fn map_session(session: Session) -> VerifyTokenResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use async_trait::async_trait;
+    use crate::use_cases::test_support::{FailureFlags, FixedClock, RecordingStore};
     use serde_json::json;
-    use std::collections::HashMap;
-    use std::sync::{Arc, Mutex};
-
-    // Fixed time source so expiry checks are deterministic.
-    struct FixedClock {
-        now: u64,
-    }
-
-    impl Clock for FixedClock {
-        fn now_epoch_seconds(&self) -> u64 {
-            self.now
-        }
-    }
-
-    #[derive(Clone)]
-    struct RecordingStore {
-        // Test-owned session table used as a fake persistence layer.
-        sessions: Arc<Mutex<HashMap<String, Session>>>,
-        // Toggle used to simulate read failures from storage.
-        should_fail_get: bool,
-    }
-
-    #[async_trait]
-    impl SessionStore for RecordingStore {
-        async fn insert(&self, token: String, session: Session) -> Result<(), String> {
-            let mut guard = self.sessions.lock().expect("sessions mutex poisoned");
-            guard.insert(token, session);
-            Ok(())
-        }
-
-        async fn get(&self, token: &str) -> Result<Option<Session>, String> {
-            // Intentional failure hook used by storage-failure test.
-            if self.should_fail_get {
-                return Err("get failed".to_string());
-            }
-            let guard = self.sessions.lock().expect("sessions mutex poisoned");
-            Ok(guard.get(token).cloned())
-        }
-
-        async fn remove(&self, token: &str) -> Result<bool, String> {
-            let mut guard = self.sessions.lock().expect("sessions mutex poisoned");
-            Ok(guard.remove(token).is_some())
-        }
-    }
 
     #[tokio::test]
     async fn when_token_exists_and_not_expired_then_returns_session_identity() {
@@ -111,15 +67,12 @@ mod tests {
             session_id: "session-1".to_string(),
             expires_at: 1_700_000_100,
         };
-        let mut sessions = HashMap::new();
-        sessions.insert(token.clone(), session);
+        let store = RecordingStore::new();
+        store.insert_test_session(token.clone(), session);
 
         let use_case = VerifyTokenUseCase {
-            clock: FixedClock { now: 1_700_000_000 },
-            store: RecordingStore {
-                sessions: Arc::new(Mutex::new(sessions)),
-                should_fail_get: false,
-            },
+            clock: FixedClock(1_700_000_000),
+            store,
         };
 
         let result = use_case
@@ -136,11 +89,8 @@ mod tests {
     #[tokio::test]
     async fn when_token_does_not_exist_then_returns_invalid_token() {
         let use_case = VerifyTokenUseCase {
-            clock: FixedClock { now: 1_700_000_000 },
-            store: RecordingStore {
-                sessions: Arc::new(Mutex::new(HashMap::new())),
-                should_fail_get: false,
-            },
+            clock: FixedClock(1_700_000_000),
+            store: RecordingStore::new(),
         };
 
         let result = use_case.execute("missing".to_string()).await;
@@ -158,14 +108,11 @@ mod tests {
             session_id: "session-1".to_string(),
             expires_at: 1_700_000_000,
         };
-        let mut sessions = HashMap::new();
-        sessions.insert(token.clone(), session);
+        let store = RecordingStore::new();
+        store.insert_test_session(token.clone(), session);
         let use_case = VerifyTokenUseCase {
-            clock: FixedClock { now: 1_700_000_000 },
-            store: RecordingStore {
-                sessions: Arc::new(Mutex::new(sessions)),
-                should_fail_get: false,
-            },
+            clock: FixedClock(1_700_000_000),
+            store,
         };
 
         let result = use_case.execute(token.clone()).await;
@@ -176,11 +123,11 @@ mod tests {
     #[tokio::test]
     async fn when_store_get_fails_then_returns_storage_failure() {
         let use_case = VerifyTokenUseCase {
-            clock: FixedClock { now: 1_700_000_000 },
-            store: RecordingStore {
-                sessions: Arc::new(Mutex::new(HashMap::new())),
-                should_fail_get: true,
-            },
+            clock: FixedClock(1_700_000_000),
+            store: RecordingStore::new().with_failures(FailureFlags {
+                get: true,
+                ..Default::default()
+            }),
         };
 
         let result = use_case.execute("any-token".to_string()).await;
@@ -199,15 +146,12 @@ mod tests {
             expires_at: 1_700_000_100,
         };
 
-        let mut sessions = HashMap::new();
-        sessions.insert(stored_token, session);
+        let store = RecordingStore::new();
+        store.insert_test_session(stored_token, session);
 
         let use_case = VerifyTokenUseCase {
-            clock: FixedClock { now: 1_700_000_000 },
-            store: RecordingStore {
-                sessions: Arc::new(Mutex::new(sessions)),
-                should_fail_get: false,
-            },
+            clock: FixedClock(1_700_000_000),
+            store,
         };
 
         let result = use_case.execute("  session-token  ".to_string()).await;
@@ -218,11 +162,8 @@ mod tests {
     #[tokio::test]
     async fn when_token_is_empty_then_returns_invalid_token() {
         let use_case = VerifyTokenUseCase {
-            clock: FixedClock { now: 1_700_000_000 },
-            store: RecordingStore {
-                sessions: Arc::new(Mutex::new(HashMap::new())),
-                should_fail_get: false,
-            },
+            clock: FixedClock(1_700_000_000),
+            store: RecordingStore::new(),
         };
 
         let result = use_case.execute(String::new()).await;
@@ -240,15 +181,12 @@ mod tests {
             session_id: "session-1".to_string(),
             expires_at: 1_700_000_000,
         };
-        let mut sessions = HashMap::new();
-        sessions.insert(token.clone(), session);
+        let store = RecordingStore::new();
+        store.insert_test_session(token.clone(), session);
 
         let use_case = VerifyTokenUseCase {
-            clock: FixedClock { now: 1_700_000_000 },
-            store: RecordingStore {
-                sessions: Arc::new(Mutex::new(sessions)),
-                should_fail_get: false,
-            },
+            clock: FixedClock(1_700_000_000),
+            store,
         };
 
         let result = use_case.execute(token).await;
@@ -270,15 +208,12 @@ mod tests {
             session_id: "session-1".to_string(),
             expires_at: 1_700_000_100,
         };
-        let mut sessions = HashMap::new();
-        sessions.insert(token.clone(), session);
+        let store = RecordingStore::new();
+        store.insert_test_session(token.clone(), session);
 
         let use_case = VerifyTokenUseCase {
-            clock: FixedClock { now: 1_700_000_000 },
-            store: RecordingStore {
-                sessions: Arc::new(Mutex::new(sessions)),
-                should_fail_get: false,
-            },
+            clock: FixedClock(1_700_000_000),
+            store,
         };
 
         let result = use_case
@@ -292,11 +227,8 @@ mod tests {
     #[tokio::test]
     async fn when_token_is_random_garbage_then_returns_invalid_token() {
         let use_case = VerifyTokenUseCase {
-            clock: FixedClock { now: 1_700_000_000 },
-            store: RecordingStore {
-                sessions: Arc::new(Mutex::new(HashMap::new())),
-                should_fail_get: false,
-            },
+            clock: FixedClock(1_700_000_000),
+            store: RecordingStore::new(),
         };
 
         let result = use_case.execute("%%%not-a-token%%%".to_string()).await;

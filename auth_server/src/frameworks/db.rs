@@ -1,4 +1,4 @@
-use sqlx::{PgPool, postgres::PgPoolOptions};
+use sqlx::{postgres::PgPoolOptions, PgPool};
 
 // Build a small PostgreSQL pool for the auth service.
 pub async fn connect_pool(database_url: &str) -> Result<PgPool, sqlx::Error> {

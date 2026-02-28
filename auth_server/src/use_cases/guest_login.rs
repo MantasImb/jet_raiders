@@ -86,61 +86,14 @@ fn validate_display_name(value: &str) -> Result<String, AuthError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use async_trait::async_trait;
+    use crate::use_cases::test_support::{FailureFlags, FixedClock, RecordingStore};
     use serde_json::json;
-    use std::collections::HashMap;
-    use std::sync::{Arc, Mutex};
-
-    // Fixed time source so expiry assertions are deterministic.
-    struct FixedClock {
-        now: u64,
-    }
-
-    impl Clock for FixedClock {
-        fn now_epoch_seconds(&self) -> u64 {
-            self.now
-        }
-    }
-
-    #[derive(Clone)]
-    struct RecordingStore {
-        // Shared in-memory map lets tests inspect what execute() stored.
-        sessions: Arc<Mutex<HashMap<String, Session>>>,
-        // Toggle used by negative-path tests to simulate infrastructure failure.
-        should_fail_insert: bool,
-    }
-
-    #[async_trait]
-    impl SessionStore for RecordingStore {
-        async fn insert(&self, token: String, session: Session) -> Result<(), String> {
-            // Intentional failure hook used to verify error mapping behavior.
-            if self.should_fail_insert {
-                return Err("insert failed".to_string());
-            }
-            let mut guard = self.sessions.lock().expect("sessions mutex poisoned");
-            guard.insert(token, session);
-            Ok(())
-        }
-
-        async fn get(&self, token: &str) -> Result<Option<Session>, String> {
-            let guard = self.sessions.lock().expect("sessions mutex poisoned");
-            Ok(guard.get(token).cloned())
-        }
-
-        async fn remove(&self, token: &str) -> Result<bool, String> {
-            let mut guard = self.sessions.lock().expect("sessions mutex poisoned");
-            Ok(guard.remove(token).is_some())
-        }
-    }
 
     #[tokio::test]
     async fn when_payload_is_valid_then_session_is_stored_and_response_is_returned() {
-        let store = RecordingStore {
-            sessions: Arc::new(Mutex::new(HashMap::new())),
-            should_fail_insert: false,
-        };
+        let store = RecordingStore::new();
         let use_case = GuestLoginUseCase {
-            clock: FixedClock { now: 1_700_000_000 },
+            clock: FixedClock(1_700_000_000),
             store: store.clone(),
             ttl_seconds: 3600,
         };
@@ -158,9 +111,8 @@ mod tests {
         assert_eq!(result.expires_at, 1_700_003_600);
 
         // Verify that the generated token points to the stored canonical session.
-        let sessions = store.sessions.lock().expect("sessions mutex poisoned");
-        let saved = sessions
-            .get(&result.token)
+        let saved = store
+            .get_test_session(&result.token)
             .expect("expected session to be stored");
         assert_eq!(saved.guest_id, 42);
         assert_eq!(saved.display_name, "Pilot_42");
@@ -170,11 +122,8 @@ mod tests {
     #[tokio::test]
     async fn when_guest_id_is_zero_then_returns_invalid_guest_id() {
         let use_case = GuestLoginUseCase {
-            clock: FixedClock { now: 1_700_000_000 },
-            store: RecordingStore {
-                sessions: Arc::new(Mutex::new(HashMap::new())),
-                should_fail_insert: false,
-            },
+            clock: FixedClock(1_700_000_000),
+            store: RecordingStore::new(),
             ttl_seconds: 3600,
         };
 
@@ -192,11 +141,8 @@ mod tests {
     #[tokio::test]
     async fn when_display_name_contains_invalid_characters_then_returns_invalid_display_name() {
         let use_case = GuestLoginUseCase {
-            clock: FixedClock { now: 1_700_000_000 },
-            store: RecordingStore {
-                sessions: Arc::new(Mutex::new(HashMap::new())),
-                should_fail_insert: false,
-            },
+            clock: FixedClock(1_700_000_000),
+            store: RecordingStore::new(),
             ttl_seconds: 3600,
         };
 
@@ -216,11 +162,11 @@ mod tests {
         // This test injects a store failure and checks the use case maps it to
         // the domain-level error contract instead of leaking raw store errors.
         let use_case = GuestLoginUseCase {
-            clock: FixedClock { now: 1_700_000_000 },
-            store: RecordingStore {
-                sessions: Arc::new(Mutex::new(HashMap::new())),
-                should_fail_insert: true,
-            },
+            clock: FixedClock(1_700_000_000),
+            store: RecordingStore::new().with_failures(FailureFlags {
+                insert: true,
+                ..Default::default()
+            }),
             ttl_seconds: 3600,
         };
 
@@ -238,11 +184,8 @@ mod tests {
     #[tokio::test]
     async fn when_display_name_length_is_two_then_returns_invalid_display_name() {
         let use_case = GuestLoginUseCase {
-            clock: FixedClock { now: 1_700_000_000 },
-            store: RecordingStore {
-                sessions: Arc::new(Mutex::new(HashMap::new())),
-                should_fail_insert: false,
-            },
+            clock: FixedClock(1_700_000_000),
+            store: RecordingStore::new(),
             ttl_seconds: 3600,
         };
 
@@ -260,11 +203,8 @@ mod tests {
     #[tokio::test]
     async fn when_display_name_length_is_three_then_guest_login_succeeds() {
         let use_case = GuestLoginUseCase {
-            clock: FixedClock { now: 1_700_000_000 },
-            store: RecordingStore {
-                sessions: Arc::new(Mutex::new(HashMap::new())),
-                should_fail_insert: false,
-            },
+            clock: FixedClock(1_700_000_000),
+            store: RecordingStore::new(),
             ttl_seconds: 3600,
         };
 
@@ -283,11 +223,8 @@ mod tests {
     #[tokio::test]
     async fn when_display_name_length_is_thirty_two_then_guest_login_succeeds() {
         let use_case = GuestLoginUseCase {
-            clock: FixedClock { now: 1_700_000_000 },
-            store: RecordingStore {
-                sessions: Arc::new(Mutex::new(HashMap::new())),
-                should_fail_insert: false,
-            },
+            clock: FixedClock(1_700_000_000),
+            store: RecordingStore::new(),
             ttl_seconds: 3600,
         };
 
@@ -306,11 +243,8 @@ mod tests {
     #[tokio::test]
     async fn when_display_name_length_is_thirty_three_then_returns_invalid_display_name() {
         let use_case = GuestLoginUseCase {
-            clock: FixedClock { now: 1_700_000_000 },
-            store: RecordingStore {
-                sessions: Arc::new(Mutex::new(HashMap::new())),
-                should_fail_insert: false,
-            },
+            clock: FixedClock(1_700_000_000),
+            store: RecordingStore::new(),
             ttl_seconds: 3600,
         };
 
@@ -328,11 +262,8 @@ mod tests {
     #[tokio::test]
     async fn when_display_name_uses_allowed_symbols_then_guest_login_succeeds() {
         let use_case = GuestLoginUseCase {
-            clock: FixedClock { now: 1_700_000_000 },
-            store: RecordingStore {
-                sessions: Arc::new(Mutex::new(HashMap::new())),
-                should_fail_insert: false,
-            },
+            clock: FixedClock(1_700_000_000),
+            store: RecordingStore::new(),
             ttl_seconds: 3600,
         };
 
@@ -351,11 +282,8 @@ mod tests {
     #[tokio::test]
     async fn when_display_name_contains_internal_space_then_guest_login_succeeds() {
         let use_case = GuestLoginUseCase {
-            clock: FixedClock { now: 1_700_000_000 },
-            store: RecordingStore {
-                sessions: Arc::new(Mutex::new(HashMap::new())),
-                should_fail_insert: false,
-            },
+            clock: FixedClock(1_700_000_000),
+            store: RecordingStore::new(),
             ttl_seconds: 3600,
         };
 
@@ -374,11 +302,8 @@ mod tests {
     #[tokio::test]
     async fn when_display_name_has_trailing_whitespace_then_returns_invalid_display_name() {
         let use_case = GuestLoginUseCase {
-            clock: FixedClock { now: 1_700_000_000 },
-            store: RecordingStore {
-                sessions: Arc::new(Mutex::new(HashMap::new())),
-                should_fail_insert: false,
-            },
+            clock: FixedClock(1_700_000_000),
+            store: RecordingStore::new(),
             ttl_seconds: 3600,
         };
 
@@ -396,11 +321,8 @@ mod tests {
     #[tokio::test]
     async fn when_display_name_has_leading_whitespace_then_returns_invalid_display_name() {
         let use_case = GuestLoginUseCase {
-            clock: FixedClock { now: 1_700_000_000 },
-            store: RecordingStore {
-                sessions: Arc::new(Mutex::new(HashMap::new())),
-                should_fail_insert: false,
-            },
+            clock: FixedClock(1_700_000_000),
+            store: RecordingStore::new(),
             ttl_seconds: 3600,
         };
 
@@ -417,12 +339,9 @@ mod tests {
 
     #[tokio::test]
     async fn when_metadata_is_present_then_it_is_saved_in_session() {
-        let store = RecordingStore {
-            sessions: Arc::new(Mutex::new(HashMap::new())),
-            should_fail_insert: false,
-        };
+        let store = RecordingStore::new();
         let use_case = GuestLoginUseCase {
-            clock: FixedClock { now: 1_700_000_000 },
+            clock: FixedClock(1_700_000_000),
             store: store.clone(),
             ttl_seconds: 3600,
         };
@@ -440,21 +359,17 @@ mod tests {
             .await
             .expect("expected guest login to succeed with metadata");
 
-        let sessions = store.sessions.lock().expect("sessions mutex poisoned");
-        let saved = sessions
-            .get(&result.token)
+        let saved = store
+            .get_test_session(&result.token)
             .expect("expected session to be stored");
         assert_eq!(saved.metadata, Some(metadata));
     }
 
     #[tokio::test]
     async fn when_metadata_is_none_then_session_metadata_stays_none() {
-        let store = RecordingStore {
-            sessions: Arc::new(Mutex::new(HashMap::new())),
-            should_fail_insert: false,
-        };
+        let store = RecordingStore::new();
         let use_case = GuestLoginUseCase {
-            clock: FixedClock { now: 1_700_000_000 },
+            clock: FixedClock(1_700_000_000),
             store: store.clone(),
             ttl_seconds: 3600,
         };
@@ -468,21 +383,17 @@ mod tests {
             .await
             .expect("expected guest login to succeed without metadata");
 
-        let sessions = store.sessions.lock().expect("sessions mutex poisoned");
-        let saved = sessions
-            .get(&result.token)
+        let saved = store
+            .get_test_session(&result.token)
             .expect("expected session to be stored");
         assert_eq!(saved.metadata, None);
     }
 
     #[tokio::test]
     async fn when_metadata_is_nested_json_then_it_is_preserved_exactly() {
-        let store = RecordingStore {
-            sessions: Arc::new(Mutex::new(HashMap::new())),
-            should_fail_insert: false,
-        };
+        let store = RecordingStore::new();
         let use_case = GuestLoginUseCase {
-            clock: FixedClock { now: 1_700_000_000 },
+            clock: FixedClock(1_700_000_000),
             store: store.clone(),
             ttl_seconds: 3600,
         };
@@ -505,9 +416,8 @@ mod tests {
             .await
             .expect("expected guest login to succeed with nested metadata");
 
-        let sessions = store.sessions.lock().expect("sessions mutex poisoned");
-        let saved = sessions
-            .get(&result.token)
+        let saved = store
+            .get_test_session(&result.token)
             .expect("expected session to be stored");
         assert_eq!(saved.metadata, Some(metadata));
     }
@@ -515,11 +425,8 @@ mod tests {
     #[tokio::test]
     async fn when_ttl_is_zero_then_expires_at_matches_current_time() {
         let use_case = GuestLoginUseCase {
-            clock: FixedClock { now: 1_700_000_000 },
-            store: RecordingStore {
-                sessions: Arc::new(Mutex::new(HashMap::new())),
-                should_fail_insert: false,
-            },
+            clock: FixedClock(1_700_000_000),
+            store: RecordingStore::new(),
             ttl_seconds: 0,
         };
 
