@@ -50,3 +50,257 @@ fn map_session(session: Session) -> VerifyTokenResponse {
         expires_at: session.expires_at,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+    use serde_json::json;
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+
+    // Fixed time source so expiry checks are deterministic.
+    struct FixedClock {
+        now: u64,
+    }
+
+    impl Clock for FixedClock {
+        fn now_epoch_seconds(&self) -> u64 {
+            self.now
+        }
+    }
+
+    #[derive(Clone)]
+    struct RecordingStore {
+        // Test-owned session table used as a fake persistence layer.
+        sessions: Arc<Mutex<HashMap<String, Session>>>,
+        // Toggle used to simulate read failures from storage.
+        should_fail_get: bool,
+    }
+
+    #[async_trait]
+    impl SessionStore for RecordingStore {
+        async fn insert(&self, token: String, session: Session) -> Result<(), String> {
+            let mut guard = self.sessions.lock().expect("sessions mutex poisoned");
+            guard.insert(token, session);
+            Ok(())
+        }
+
+        async fn get(&self, token: &str) -> Result<Option<Session>, String> {
+            // Intentional failure hook used by storage-failure test.
+            if self.should_fail_get {
+                return Err("get failed".to_string());
+            }
+            let guard = self.sessions.lock().expect("sessions mutex poisoned");
+            Ok(guard.get(token).cloned())
+        }
+
+        async fn remove(&self, token: &str) -> Result<bool, String> {
+            let mut guard = self.sessions.lock().expect("sessions mutex poisoned");
+            Ok(guard.remove(token).is_some())
+        }
+    }
+
+    #[tokio::test]
+    async fn when_token_exists_and_not_expired_then_returns_session_identity() {
+        let token = "session-token".to_string();
+        let session = Session {
+            guest_id: 9,
+            display_name: "Pilot".to_string(),
+            metadata: None,
+            session_id: "session-1".to_string(),
+            expires_at: 1_700_000_100,
+        };
+        let mut sessions = HashMap::new();
+        sessions.insert(token.clone(), session);
+
+        let use_case = VerifyTokenUseCase {
+            clock: FixedClock { now: 1_700_000_000 },
+            store: RecordingStore {
+                sessions: Arc::new(Mutex::new(sessions)),
+                should_fail_get: false,
+            },
+        };
+
+        let result = use_case
+            .execute(token)
+            .await
+            .expect("expected token verification to succeed");
+
+        assert_eq!(result.user_id, 9);
+        assert_eq!(result.display_name, "Pilot");
+        assert_eq!(result.session_id, "session-1");
+        assert_eq!(result.expires_at, 1_700_000_100);
+    }
+
+    #[tokio::test]
+    async fn when_token_does_not_exist_then_returns_invalid_token() {
+        let use_case = VerifyTokenUseCase {
+            clock: FixedClock { now: 1_700_000_000 },
+            store: RecordingStore {
+                sessions: Arc::new(Mutex::new(HashMap::new())),
+                should_fail_get: false,
+            },
+        };
+
+        let result = use_case.execute("missing".to_string()).await;
+
+        assert!(matches!(result, Err(AuthError::InvalidToken)));
+    }
+
+    #[tokio::test]
+    async fn when_session_is_expired_then_returns_session_expired_and_cleans_up_token() {
+        let token = "expired-token".to_string();
+        let session = Session {
+            guest_id: 9,
+            display_name: "Pilot".to_string(),
+            metadata: None,
+            session_id: "session-1".to_string(),
+            expires_at: 1_700_000_000,
+        };
+        let mut sessions = HashMap::new();
+        sessions.insert(token.clone(), session);
+        let use_case = VerifyTokenUseCase {
+            clock: FixedClock { now: 1_700_000_000 },
+            store: RecordingStore {
+                sessions: Arc::new(Mutex::new(sessions)),
+                should_fail_get: false,
+            },
+        };
+
+        let result = use_case.execute(token.clone()).await;
+
+        assert!(matches!(result, Err(AuthError::SessionExpired)));
+    }
+
+    #[tokio::test]
+    async fn when_store_get_fails_then_returns_storage_failure() {
+        let use_case = VerifyTokenUseCase {
+            clock: FixedClock { now: 1_700_000_000 },
+            store: RecordingStore {
+                sessions: Arc::new(Mutex::new(HashMap::new())),
+                should_fail_get: true,
+            },
+        };
+
+        let result = use_case.execute("any-token".to_string()).await;
+
+        assert!(matches!(result, Err(AuthError::StorageFailure)));
+    }
+
+    #[tokio::test]
+    async fn when_token_has_surrounding_whitespace_then_returns_invalid_token() {
+        let stored_token = "session-token".to_string();
+        let session = Session {
+            guest_id: 9,
+            display_name: "Pilot".to_string(),
+            metadata: None,
+            session_id: "session-1".to_string(),
+            expires_at: 1_700_000_100,
+        };
+
+        let mut sessions = HashMap::new();
+        sessions.insert(stored_token, session);
+
+        let use_case = VerifyTokenUseCase {
+            clock: FixedClock { now: 1_700_000_000 },
+            store: RecordingStore {
+                sessions: Arc::new(Mutex::new(sessions)),
+                should_fail_get: false,
+            },
+        };
+
+        let result = use_case.execute("  session-token  ".to_string()).await;
+
+        assert!(matches!(result, Err(AuthError::InvalidToken)));
+    }
+
+    #[tokio::test]
+    async fn when_token_is_empty_then_returns_invalid_token() {
+        let use_case = VerifyTokenUseCase {
+            clock: FixedClock { now: 1_700_000_000 },
+            store: RecordingStore {
+                sessions: Arc::new(Mutex::new(HashMap::new())),
+                should_fail_get: false,
+            },
+        };
+
+        let result = use_case.execute(String::new()).await;
+
+        assert!(matches!(result, Err(AuthError::InvalidToken)));
+    }
+
+    #[tokio::test]
+    async fn when_session_expiry_equals_now_then_returns_session_expired() {
+        let token = "edge-expired-token".to_string();
+        let session = Session {
+            guest_id: 9,
+            display_name: "Pilot".to_string(),
+            metadata: None,
+            session_id: "session-1".to_string(),
+            expires_at: 1_700_000_000,
+        };
+        let mut sessions = HashMap::new();
+        sessions.insert(token.clone(), session);
+
+        let use_case = VerifyTokenUseCase {
+            clock: FixedClock { now: 1_700_000_000 },
+            store: RecordingStore {
+                sessions: Arc::new(Mutex::new(sessions)),
+                should_fail_get: false,
+            },
+        };
+
+        let result = use_case.execute(token).await;
+
+        assert!(matches!(result, Err(AuthError::SessionExpired)));
+    }
+
+    #[tokio::test]
+    async fn when_session_contains_metadata_then_verify_response_keeps_it() {
+        let token = "session-token-with-metadata".to_string();
+        let metadata = json!({
+            "device": "ios",
+            "build": "1.2.3"
+        });
+        let session = Session {
+            guest_id: 9,
+            display_name: "Pilot".to_string(),
+            metadata: Some(metadata.clone()),
+            session_id: "session-1".to_string(),
+            expires_at: 1_700_000_100,
+        };
+        let mut sessions = HashMap::new();
+        sessions.insert(token.clone(), session);
+
+        let use_case = VerifyTokenUseCase {
+            clock: FixedClock { now: 1_700_000_000 },
+            store: RecordingStore {
+                sessions: Arc::new(Mutex::new(sessions)),
+                should_fail_get: false,
+            },
+        };
+
+        let result = use_case
+            .execute(token)
+            .await
+            .expect("expected token verification to succeed");
+
+        assert_eq!(result.metadata, Some(metadata));
+    }
+
+    #[tokio::test]
+    async fn when_token_is_random_garbage_then_returns_invalid_token() {
+        let use_case = VerifyTokenUseCase {
+            clock: FixedClock { now: 1_700_000_000 },
+            store: RecordingStore {
+                sessions: Arc::new(Mutex::new(HashMap::new())),
+                should_fail_get: false,
+            },
+        };
+
+        let result = use_case.execute("%%%not-a-token%%%".to_string()).await;
+
+        assert!(matches!(result, Err(AuthError::InvalidToken)));
+    }
+}
