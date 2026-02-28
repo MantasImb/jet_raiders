@@ -48,7 +48,7 @@ Request:
 ```json
 {
   "display_name": "Pilot_42",
-  "metadata": {"region": "eu"}
+  "metadata": { "region": "eu" }
 }
 ```
 
@@ -67,6 +67,7 @@ Validation:
 - `display_name` length must be `3..=32` characters.
 - Allowed chars: ASCII letters, digits, space, `_`, `-`.
 - No leading/trailing whitespace.
+- `guest_id` is exposed as an unsigned 64-bit integer (`u64`).
 
 ### `POST /auth/guest`
 
@@ -78,7 +79,7 @@ Request:
 {
   "guest_id": 123456789,
   "display_name": "Pilot_42",
-  "metadata": {"region": "eu"}
+  "metadata": { "region": "eu" }
 }
 ```
 
@@ -95,6 +96,7 @@ Validation:
 
 - `guest_id` must be non-zero.
 - `display_name` uses the same validation rules as `/auth/guest/init`.
+- `guest_id` is exposed as an unsigned 64-bit integer (`u64`).
 
 ### `POST /auth/verify-token`
 
@@ -114,7 +116,7 @@ Success response:
 {
   "user_id": 123456789,
   "display_name": "Pilot_42",
-  "metadata": {"region": "eu"},
+  "metadata": { "region": "eu" },
   "session_id": "uuid-session-id",
   "expires_at": 1700003600
 }
@@ -185,21 +187,13 @@ Current schema stores guest profile snapshots:
 
 - `guest_profiles(guest_id TEXT PRIMARY KEY, display_name TEXT, metadata TEXT)`
 
+Type note:
+
+- API canonical type is numeric `u64`.
+- `guest_profiles.guest_id` is stored as `TEXT` using the decimal string form
+  of that same numeric ID.
+
 Guest profile persistence is best-effort and does not block token issuance.
-
-## Local Run
-
-From repository root:
-
-```bash
-cargo run -p auth_server
-```
-
-Or from `auth_server/`:
-
-```bash
-cargo run
-```
 
 ## Testing
 

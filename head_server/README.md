@@ -46,7 +46,7 @@ Success response:
 {
   "guest_id": "123456789",
   "session_token": "uuid-token",
-  "expires_at": 1700003600
+  "expires_at": "<unix_epoch_seconds>"
 }
 ```
 
@@ -68,7 +68,7 @@ Success response:
 ```json
 {
   "session_token": "uuid-token",
-  "expires_at": 1700003600
+  "expires_at": "<unix_epoch_seconds>"
 }
 ```
 
