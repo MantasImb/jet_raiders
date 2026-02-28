@@ -95,7 +95,7 @@ server-side; the client submits intent only.
 {
   "type": "Identity",
   "data": {
-    "player_id": 1234567890
+    "player_id": "1234567890"
   }
 }
 ```
