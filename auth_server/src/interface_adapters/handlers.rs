@@ -1,14 +1,10 @@
 use crate::domain::errors::AuthError;
 use crate::interface_adapters::protocol::{
     ErrorResponse, GuestInitRequest, GuestInitResponse, GuestLoginRequest, GuestLoginResponse,
-    LogoutRequest, LogoutResponse,
-    VerifyTokenRequest, VerifyTokenResponse,
+    LogoutRequest, LogoutResponse, VerifyTokenRequest, VerifyTokenResponse,
 };
 use crate::interface_adapters::state::{
-    AppState,
-    InMemorySessionStore,
-    PostgresGuestProfileStore,
-    SystemClock,
+    AppState, InMemorySessionStore, PostgresGuestProfileStore, SystemClock,
 };
 use crate::use_cases::guest_login::GuestLoginUseCase;
 use crate::use_cases::logout::LogoutUseCase;
@@ -188,9 +184,7 @@ fn map_auth_error(err: AuthError, context: AuthErrorContext) -> (StatusCode, Jso
             AuthError::InvalidGuestId => {
                 error_response(StatusCode::BAD_GATEWAY, "failed to allocate guest_id")
             }
-            AuthError::StorageFailure
-            | AuthError::InvalidToken
-            | AuthError::SessionExpired => {
+            AuthError::StorageFailure | AuthError::InvalidToken | AuthError::SessionExpired => {
                 error_response(StatusCode::BAD_GATEWAY, "storage error")
             }
         },
@@ -201,9 +195,7 @@ fn map_auth_error(err: AuthError, context: AuthErrorContext) -> (StatusCode, Jso
             AuthError::InvalidDisplayName => {
                 error_response(StatusCode::BAD_REQUEST, "invalid display_name")
             }
-            AuthError::StorageFailure
-            | AuthError::InvalidToken
-            | AuthError::SessionExpired => {
+            AuthError::StorageFailure | AuthError::InvalidToken | AuthError::SessionExpired => {
                 error_response(StatusCode::BAD_GATEWAY, "storage error")
             }
         },
@@ -211,7 +203,9 @@ fn map_auth_error(err: AuthError, context: AuthErrorContext) -> (StatusCode, Jso
             AuthError::InvalidToken => {
                 error_response(StatusCode::UNAUTHORIZED, "invalid session token")
             }
-            AuthError::SessionExpired => error_response(StatusCode::UNAUTHORIZED, "session expired"),
+            AuthError::SessionExpired => {
+                error_response(StatusCode::UNAUTHORIZED, "session expired")
+            }
             AuthError::StorageFailure => error_response(StatusCode::BAD_GATEWAY, "storage error"),
             AuthError::InvalidGuestId | AuthError::InvalidDisplayName => {
                 error_response(StatusCode::BAD_REQUEST, "invalid session data")
