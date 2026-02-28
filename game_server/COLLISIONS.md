@@ -24,9 +24,13 @@ Effective hit distance:
 
 ## Where the code lives
 
-All collision work is currently performed in the main world tick loop:
+Collision resolution is implemented in the projectile system:
 
-- `game_server/src/use_cases/game.rs` (inside `world_task`)
+- `game_server/src/domain/systems/projectiles.rs` (`tick_projectiles`)
+
+The world task calls this system every tick:
+
+- `game_server/src/use_cases/game.rs`
 
 The radii are sourced from tuning:
 
@@ -49,7 +53,7 @@ if e.id == p.owner_id {
 
 When a hit is detected, we:
 
-1. `println!` a hit message
+1. emit a structured `tracing::info!` hit event
 2. mark the projectile for despawn by setting `p.ttl = 0.0`
 3. remove it in the `retain` pass
 
@@ -65,7 +69,7 @@ This is fine for small counts; later we can switch to spatial hashing / grid.
 
 ### Projectile movement + TTL
 
-File: `game_server/src/use_cases/game.rs`
+File: `game_server/src/domain/systems/projectiles.rs`
 
 ```rust
 for p in &mut projectiles {
@@ -77,7 +81,7 @@ for p in &mut projectiles {
 
 ### Projectile vs player collision
 
-File: `game_server/src/use_cases/game.rs`
+File: `game_server/src/domain/systems/projectiles.rs`
 
 ```rust
 let hit_radius = player_radius + projectile_radius;
@@ -87,7 +91,10 @@ for p in &mut projectiles {
         continue;
     }
 
-    for e in &entities {
+    for e in entities.iter_mut() {
+        if !e.alive {
+            continue;
+        }
         if e.id == p.owner_id {
             continue;
         }
@@ -100,7 +107,16 @@ for p in &mut projectiles {
                 e.hp = 0;
                 e.alive = false;
                 e.respawn_timer = respawn_delay;
+                e.throttle = 0.0;
+                e.shoot_cooldown = 0.0;
             }
+            info!(
+                victim_id = e.id,
+                shooter_id = p.owner_id,
+                projectile_id = p.id,
+                victim_hp = e.hp,
+                "player hit"
+            );
             p.ttl = 0.0;
             break;
         }

@@ -25,13 +25,13 @@ forward direction.
 
 ### Constants (Configurable)
 
-- `MAX_SPEED`: Maximum pixels per second (e.g., 150.0).
-- `TURN_RATE`: Rotation speed in radians per second (e.g., 2.5).
-- `THROTTLE_RATE`: How fast throttle increases/decreases per second (e.g., 1.0).
+- `MAX_SPEED`: Maximum pixels per second (default `150.0`).
+- `TURN_RATE`: Rotation speed in radians per second (default `3.0`).
+- `THROTTLE_RATE`: How fast throttle increases/decreases per second (default `2.0`).
 
 ### Client Input Packet (Per Tick)
 
-Client-to-server inputs should match `CLIENT_NETWORKING.md`.
+Client-to-server inputs should match `game_client/CLIENT_NETWORKING.md`.
 
 ```json
 {
@@ -123,11 +123,8 @@ Projectiles follow simple linear motion.
    if life_time <= 0.0 { destroy(); }
    ```
 
-3. **Wrapping**: Projectiles should also wrap around the screen to match player
-   expectation (or be destroyed at border, depending on design choice. Currently:
-   **Wraps** based on gameplay feel, though simple destruction is easier to start).
-   _Correction based on `Projectile.gd`: The Godot script does NOT wrap projectiles.
-   They fly until `QueueFree` timer expires. We will replicate this._
+3. **World boundary behavior**: projectiles do **not** wrap. They continue along
+   their velocity until despawn (TTL expiry) or collision hit.
 
 ## 5. Collision Detection
 

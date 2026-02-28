@@ -1,117 +1,77 @@
 # Matchmaking Server Code Plan
 
-## Goals
+## Summary
 
-- Implement a clean, game-agnostic matchmaking service that follows the
-  repository architecture and clean architecture guidelines.
-- Keep the first iteration as small and direct as possible, with only the
-  minimum endpoints and logic needed to queue and return assignments.
-- Keep queue state and match assignment logic isolated from transport concerns.
+The matchmaking service is already runnable and currently provides a minimal
+in-memory queue endpoint:
 
-## Proposed Crate Layout (Initial)
+- `POST /matchmaking/queue`
+
+This document tracks the current implementation shape and the next incremental
+steps.
+
+## Current Crate Layout (Implemented)
 
 ```text
 matchmaking_server/
 ├── Cargo.toml
 └── src/
-    ├── main.rs            # Bootstrap, config, wiring, server startup.
-    ├── config.rs          # Env/config parsing and types.
-    ├── net/               # HTTP adapters and request/response mapping.
+    ├── main.rs
+    ├── domain/
     │   ├── mod.rs
-    │   └── http.rs         # REST endpoints for queue/status/cancel.
-    ├── protocol/          # Wire DTOs for HTTP payloads.
+    │   └── queue.rs
+    ├── use_cases/
     │   ├── mod.rs
-    │   └── http.rs
-    ├── application/       # Use cases and orchestration.
+    │   └── matchmaker.rs
+    ├── interface_adapters/
     │   ├── mod.rs
-    │   ├── queue_service.rs
-    │   └── match_service.rs
-    ├── domain/            # Core domain logic and entities.
-    │   ├── mod.rs
-    │   ├── queue.rs
-    │   ├── match.rs
-    │   └── tickets.rs
-    ├── storage/           # Data store abstractions + implementations.
-    │   ├── mod.rs
-    │   └── memory.rs
-    └── clients/           # Outbound clients for auth and game server registry.
+    │   ├── protocol.rs
+    │   ├── routes.rs
+    │   ├── state.rs
+    │   └── handlers/
+    │       ├── mod.rs
+    │       └── queue.rs
+    └── frameworks/
         ├── mod.rs
-        ├── auth.rs
-        └── server_registry.rs
+        └── server.rs
 ```
 
-## Layering Rules
+## Current Behavior (Implemented)
 
-- **Domain** contains matchmaking rules, queue entities, and ticket logic.
-- **Application** owns use cases and orchestration without transport details.
-- **Protocol** defines wire DTOs for HTTP and WebSocket messages.
-- **Net** owns Axum handlers, request validation, and DTO conversions.
-- **Storage** holds repository traits and concrete persistence adapters.
-- **Clients** provides integration boundaries for external services.
-- **Main** wires dependencies and starts the server.
+1. Head service (or another caller) sends `POST /matchmaking/queue` with
+   `player_id`, `player_skill`, and `region`.
+2. Handler validates required fields.
+3. Matchmaker checks for a waiting player in the same region.
+4. If found, returns `matched` with `match_id` and `opponent_id`.
+5. If not found, stores the player and returns `waiting` with `ticket_id`.
+6. Duplicate enqueue by the same player returns conflict.
 
-## Core Data Model
+## Layer Ownership
 
-- `QueueEntry`
-  - `user_id`, `party_id`, `region`, `skill`, `enqueued_at`.
-- `QueueTicket`
-  - `ticket_id`, `expires_at`.
-- `MatchAssignment`
-  - `lobby_id`, `server_addr`, `match_ticket`, `expires_at`.
+- `domain/`: queue entities and ID builders.
+- `use_cases/`: matchmaking orchestration and outcomes/errors.
+- `interface_adapters/`: HTTP DTOs, validation, route wiring, app state.
+- `frameworks/`: runtime bootstrap, tracing setup, and server startup.
 
-## Primary Use Cases
+## Current Constraints
 
-### Enqueue
-
-1. Validate auth token with the auth client.
-2. Normalize queue request and create a `QueueEntry`.
-3. Store entry and return a `QueueTicket`.
-
-### Status
-
-1. Lookup ticket in storage.
-2. Return queue position or `MatchAssignment` if available.
-
-### Cancel
-
-1. Validate ticket.
-2. Remove from queue and release resources.
-
-## Matching Flow
-
-- A background task or periodic tick evaluates queued entries.
-- Candidate groups are formed by region, party size, and skill window.
-- A server registry client selects a target game server.
-- A match ticket is minted with a short TTL and stored.
-- Assignment is published for HTTP polling or WS subscribers.
-
-## Storage Strategy
-
-- Start with in-memory storage for development and testing.
-- Define repository traits for queue entries, tickets, and assignments.
-
-## Observability
-
-- Emit structured logs for queue sizes, match assignment, and failures.
-
-## Security Considerations
-
-- All queue operations require validated auth tokens.
-- Match tickets are short-lived and single-use.
-- Avoid exposing internal server metadata in public responses.
+- Queue storage is in-memory only.
+- Matching rule is region-only.
+- No queue status/cancel endpoints yet.
+- No auth validation at the matchmaking boundary yet.
 
 ## Incremental Delivery Plan
 
-1. Bootstrap Axum server with health endpoint and config.
-2. Implement protocol DTOs for queue/status/cancel.
-3. Build in-memory queue repository and use cases.
-4. Wire HTTP endpoints to use cases.
-5. Add match assignment logic and server registry client.
+1. Add auth validation middleware or service call for queue requests.
+2. Add status endpoint for ticket polling.
+3. Add cancel endpoint for queue withdrawal.
+4. Add queue expiry/cleanup for stale waiting entries.
+5. Add metrics and richer tracing for queue depth and wait time.
+6. Introduce a persistence adapter (for example Redis) behind a trait boundary.
 
-## Future Feature List
+## Acceptance Criteria for Next Iteration
 
-- Optional WebSocket updates for queue status and match assignment.
-- Redis storage adapter for shared state and horizontal scaling.
-- Metrics for queue wait time by region and allocation success rate.
-- Additional queue rules (party size constraints, skill widening windows).
-- Dedicated background worker for match evaluation and allocation retries.
+- Unauthorized queue requests are rejected.
+- Queued players can query status and cancel.
+- Stale tickets are cleaned up deterministically.
+- Existing enqueue/match behavior remains compatible for current callers.

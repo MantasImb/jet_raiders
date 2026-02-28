@@ -3,7 +3,8 @@
 ## Purpose
 
 Use `process-compose` to run all Jet Raiders services in a single terminal. The
-configuration restarts each service when files change inside its directory.
+configuration uses `cargo watch` to re-run active Rust services when files
+change.
 
 ## Usage
 
@@ -11,9 +12,22 @@ configuration restarts each service when files change inside its directory.
 process-compose up
 ```
 
+## Active services
+
+- `auth-server`: runs in `auth_server` via `cargo watch -x check -x run`
+- `game-server`: runs in `game_server` via `cargo watch -x check -x run`
+- `head-server`: runs in `head_server` via `cargo watch -x check -x run`
+
+## Inactive entries in config
+
+- `matchmaking-server` is currently commented out in `process-compose.yaml`,
+  even though the service has a runnable binary.
+- `website` is currently commented out and remains a placeholder.
+- Uncomment and configure these entries when you want them in the local
+  process-compose stack.
+
 ## Notes
 
-- Services without runnable binaries (head, matchmaking, website) use
-  placeholders that keep the process alive and will restart on file changes.
-- The auth and game servers run via `cargo run` and restart on Rust source or
-  manifest updates.
+- Run `process-compose` from the repository root so `working_dir` paths resolve
+  correctly.
+- The current setup depends on `cargo watch` being installed.

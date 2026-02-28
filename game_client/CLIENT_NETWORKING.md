@@ -1,99 +1,124 @@
-# Client Networking Handling
+# Client Networking
 
-This document describes how the Godot client handles the connection with the
-Rust server, including input transmission, world state synchronization, and
-match state management.
+This document describes the current networking behavior of the Godot client.
+It reflects the implementation in:
 
-## 1. Connection Management
+- `Scripts/NetworkManager.gd`
+- `Scripts/UserManager.gd`
+- `Scripts/PlayerInput.gd`
+- `Scripts/Player.gd`
+- `Scripts/Projectile.gd`
 
-The client connects to the server using WebSockets (`WebSocketPeer` in Godot).
+## Overview
 
-- **Server URL**: `ws://127.0.0.1:3000/ws`
-- **Protocol**: JSON-based messages.
+The client uses:
 
-### Connection Lifecycle
+- HTTP (head server) for guest identity and login.
+- WebSocket (game server) for realtime gameplay messages.
 
-1. **Connecting**: The `NetworkManager` initializes a `WebSocketPeer` and
-   attempts to connect.
-2. **Handshake**: Once connected, the server assigns a `player_id` (handled server-side).
-3. **First state**: The server sends the initial state when the player joins, so that the client can display its own entity.
-4. **Polling**: The client must call `socket.poll()` every frame (in `_process`)
-   to process incoming packets and maintain the connection.
-
-## 2. Sending Inputs
-
-Inputs are sent from the client to the server to drive the simulation.
-
-### Input Packet Structure
-
-The server expects a JSON object containing all input states. Fields are optional
-(defaulting to 0/false) but sending the full state is recommended.
+Transport message format is JSON with a top-level wrapper:
 
 ```json
 {
-  "thrust": 1.0,
-  "turn": 0.0,
-  "shoot": true
+  "type": "MessageType",
+  "data": {}
 }
 ```
 
-**Field Definitions:**
+## Endpoints (Current Local/Test Setup)
 
-- `thrust` (f32): Throttle input in `[-1.0, 1.0]` (Godot `Input.get_axis`).
-- `turn` (f32): Turn input in `[-1.0, 1.0]`.
-- `shoot` (bool): Fire (hold-to-shoot).
-  - Client should send `true` while the button is held (`Input.is_action_pressed("shoot")`).
-  - The server fires whenever the per-player cooldown allows.
+- Head server base URL: `http://127.0.0.1:3000`
+- Game server WebSocket URL (test mode): `ws://127.0.0.1:3001/ws`
 
-### Transmission Strategy
+`NetworkManager` only auto-connects to the game server in test mode
+(`GameManager.TEST_MODE == true`).
 
-- **Frequency**: Inputs should be sent at a fixed rate (e.g., 60 times per second).
-- **Authority**: The client is a "dumb terminal". It only reports what the player
-  _wants_ to do (control intent). The server translates these controls into actual
-  movement based on ship physics. The client does not move the player locally
-  until the server confirms the movement in a world update.
+## Connection Lifecycle
 
-## 3. Server Messages
+1. `UserManager` resolves or creates `guest_id` via:
+   - `POST /guest/init` (first run or invalid stored ID)
+   - local profile load (`user://guest_profile.json`)
+2. `UserManager` logs in via `POST /guest/login` and stores `session_token`.
+3. `UserManager` emits `authenticated(session_token)`.
+4. `NetworkManager` opens a WebSocket connection to the game server.
+5. After socket open, `NetworkManager` sends a `Join` message containing the
+   auth `session_token`.
+6. Server responds with `Identity` and then periodic `WorldUpdate` messages.
 
-The server sends messages wrapped in a JSON object with a `type` and `data` field.
+During `_process`, `NetworkManager` calls `game_socket.poll()` and drains all
+available packets.
 
-### A. Identity (On Join)
+## Client -> Server Messages
 
-Sent immediately after connection to assign the player's unique ID.
+### Join
+
+Sent once after the socket opens (when authenticated).
+
+```json
+{
+  "type": "Join",
+  "data": {
+    "session_token": "..."
+  }
+}
+```
+
+### Input
+
+Sent by `PlayerInput` from the local-owned `Player` instance only.
+
+```json
+{
+  "type": "Input",
+  "data": {
+    "thrust": 1.0,
+    "turn": 0.0,
+    "shoot": true
+  }
+}
+```
+
+Input fields:
+
+- `thrust` (`float`): from `Input.get_axis("throttle_down", "throttle_up")`
+- `turn` (`float`): from `Input.get_axis("turn_left", "turn_right")`
+- `shoot` (`bool`): from `Input.is_action_pressed("shoot")`
+
+`PlayerInput` sends every physics frame while connected. Authority remains
+server-side; the client submits intent only.
+
+## Server -> Client Messages
+
+### Identity
 
 ```json
 {
   "type": "Identity",
-
   "data": {
     "player_id": 1234567890
   }
 }
 ```
 
-### B. World Update (Every Tick)
+Client behavior:
 
-Contains the snapshot of all entities.
+- Stores `data.player_id` in `user.local_player_id`.
+
+### WorldUpdate
 
 ```json
 {
   "type": "WorldUpdate",
-
   "data": {
     "tick": 123,
-
     "entities": [
       {
         "id": 1234567890,
-
         "x": 100.0,
-
         "y": 50.0,
-
         "rot": 1.57
       }
     ],
-
     "projectiles": [
       {
         "id": 1,
@@ -107,47 +132,62 @@ Contains the snapshot of all entities.
 }
 ```
 
-### C. Game State (On Change)
+Client behavior:
 
-High-level match state (Lobby, MatchStarting, etc).
+- Players:
+  - Spawn missing players under `Network/SpawnedNodes`.
+  - Update existing players via `Player.update_state(...)`.
+  - Despawn players missing from the latest snapshot.
+- Projectiles:
+  - Spawn missing projectile nodes named `proj_<id>`.
+  - Update existing projectiles via `Projectile.update_state(...)`.
+  - Despawn projectiles missing from the latest snapshot.
+
+Interpolation behavior:
+
+- `Player` lerps toward target transform (`smoothing_speed = 15.0`).
+- If player distance to target exceeds `50`, it snaps to target position.
+- `Projectile` lerps toward target transform (`smoothing_speed = 25.0`).
+- New projectile snaps on first update to avoid lerping from `(0, 0)`.
+
+### GameState
 
 ```json
 {
   "type": "GameState",
-
-  "data": {
-    "MatchStarting": { "in_seconds": 3 }
-  }
-}
-```
-
-or
-
-```json
-{
-  "type": "GameState",
-
   "data": "MatchRunning"
 }
 ```
 
-### Processing Strategy
+or:
 
-1. **Parse JSON**: Check the `type` field.
+```json
+{
+  "type": "GameState",
+  "data": {
+    "MatchStarting": {
+      "in_seconds": 3
+    }
+  }
+}
+```
 
-2. **Identity**: Store `player_id` locally as `my_player_id`.
+Current behavior: logged by `NetworkManager`. UI/game-state wiring is not
+implemented in this file yet.
 
-3. **WorldUpdate**:
-   - Iterate through `entities`.
+## Reconnect Behavior (Test Mode)
 
-   - If `id == my_player_id`, update local interpolation target (do NOT predict
-     movement yet for simplicity).
+Reconnect logic is enabled only in test mode.
 
-   - If `id` is new, spawn `player.tscn`.
+- Trigger: connection failure or closed socket.
+- Conditions: only when user is authenticated.
+- Backoff: exponential from `0.5s` up to `6.0s`.
+- Guard: avoids reconnect attempts while already connecting/open.
+- On successful reconnect: reset reconnect counters and send `Join` again.
 
-   - Iterate through `projectiles` (may be missing; treat as empty).
-     - If `id` is new, spawn `projectile.tscn`.
-     - Snap on the first update to avoid lerping from the default spawn position
-       (often `(0, 0)`), then lerp normally.
+## Notes and Constraints
 
-4. **GameState**: Update UI (timers, screens).
+- Network UI is hidden on successful socket connection and shown on close.
+- On server close, all spawned networked entities are cleared.
+- Gameplay state is server-authoritative; client-side movement is smoothing
+  only, not authoritative simulation.

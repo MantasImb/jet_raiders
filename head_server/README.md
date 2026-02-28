@@ -3,98 +3,98 @@
 ```mermaid
 flowchart TD
     F[Frameworks - server.rs] --> R[Interface Adapters - routes.rs]
-    R --> H[Interface Adapters - handlers/*]
+    R --> H[Interface Adapters - handlers/guest.rs]
     H --> S[Interface Adapters - state.rs]
-    S --> D[Domain - auth.rs - AuthProvider]
     H --> C[Interface Adapters - clients.rs - AuthClient]
-    C --> D
+    C --> D[Domain - auth.rs - AuthProvider]
 ```
 
 ## Purpose
 
-The head service is the front door for the Jet Raiders platform. It serves the
-primary web UI, coordinates account flows, and provides shared platform APIs
-that are not part of real-time gameplay.
+The head service is currently the HTTP entry point for guest identity/session
+flows used by the game client. It proxies guest auth operations to
+`auth_server`.
 
 ## Architecture Guidelines
 
 Follow `CLEAN_ARCHITECTURE_GUIDELINES.md` and the service architecture docs
 under `head_server/`.
 
-## Responsibilities
+## Current Scope (Implemented)
 
-- Serve the web app and game shell.
-- Orchestrate account onboarding and profile management.
-- Host general platform APIs (friends, party management, inventory).
-- Forward users to matchmaking once authenticated.
-- Cache platform configuration (regions, feature flags, news).
-- Own lobby ID generation for game server lobby creation (game server no longer
-  generates lobby IDs).
+- Accept guest identity/session requests from clients.
+- Call `auth_server` to create guest identities and guest sessions.
+- Return head-level response DTOs suitable for client usage.
 
-## Client Access Pattern
+## HTTP API (Implemented)
 
-The head service is the preferred entry point for client identity flows. The
-game client should authenticate through head endpoints, and the head service
-should call the auth service on the client's behalf to issue or verify session
-tokens. This keeps the auth service game-agnostic and avoids requiring clients
-to integrate directly with auth endpoints unless a dedicated launcher needs to
-bypass the head service for a specific flow.
+### `POST /guest/init`
 
-## Current Axum Server Functionality to Extract
+Creates a first-time guest identity and returns a session token.
 
-- Move guest profile persistence (guest ID, display name, metadata JSON) out of
-  the real-time WebSocket join path and into profile APIs owned by the head
-  service.
-- Normalize display name rules (max length, default name) in the head service
-  so the game server only receives validated profile data.
-- Adopt the existing guest profile upsert flow as a first-class head service
-  API so guest identity creation, naming, and metadata storage happen before
-  the client connects to a game server.
+Request:
 
-## External Interfaces
+```json
+{
+  "display_name": "Pilot_42"
+}
+```
 
-### HTTP API
+Success response:
 
-- `GET /app`
-  - Serves the web application shell.
-- `GET /profile`
-  - Returns user profile data.
-- `POST /profile/update`
-  - Updates user profile data.
-- `POST /party/create`
-  - Creates a party for a group of players.
-- `POST /party/invite`
-  - Invites a player to a party.
-- `POST /party/leave`
-  - Leaves the current party.
+```json
+{
+  "guest_id": "123456789",
+  "session_token": "uuid-token",
+  "expires_at": 1700003600
+}
+```
 
-## Data Contracts
+### `POST /guest/login`
 
-### User Profile
+Creates or refreshes a guest session for an existing guest ID.
 
-- `user_id`: canonical user ID.
-- `display_name`: player-facing name.
-- `created_at`: account creation time.
+Request:
 
-### Party State (future)
+```json
+{
+  "guest_id": "123456789",
+  "display_name": "Pilot_42"
+}
+```
 
-- `party_id`: unique party identifier.
-- `leader_id`: current party leader.
-- `member_ids`: list of current members.
+Success response:
 
-## Security Considerations
+```json
+{
+  "session_token": "uuid-token",
+  "expires_at": 1700003600
+}
+```
 
-- Validate session tokens with the auth service.
-- Enforce CSRF protection for session-bound requests.
-- Rate limit endpoints that modify player state.
+## Error Behavior
+
+- Invalid `guest_id` format in `/guest/login` returns `400`.
+- Upstream 4xx responses from `auth_server` are preserved where possible.
+- Upstream transport/failure conditions return `502`.
+
+## Runtime and Configuration
+
+- Bind address: `127.0.0.1:3000`
+- Auth base URL env var: `AUTH_SERVICE_URL`
+- Default auth base URL: `http://localhost:3002`
+- Tracing controls: `RUST_LOG`, optional `LOG_FORMAT=json`
 
 ## Dependencies
 
-- Auth service for session validation.
-- Data store for profile and party data.
-- CDN or storage service for web assets.
+- `auth_server` for guest identity/session operations.
 
-## Observability
+## Planned (Not Implemented Yet)
 
-- Track API latency and error rates.
-- Log user actions with correlation IDs.
+The following items are planned platform responsibilities, but are not
+implemented in current routes:
+
+- web app shell endpoints
+- profile management endpoints
+- party/friends/inventory endpoints
+- matchmaking orchestration endpoints
