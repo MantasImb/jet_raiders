@@ -11,7 +11,6 @@ var local_username: String
 # Keep guest_id as string at the JSON boundary to avoid large integer precision loss.
 var guest_id: String = ""
 
-@onready var auth_state_machine: AuthStateMachine = $"../AuthStateMachine"
 @onready var username_input: LineEdit = $"../NetworkUI/VBoxContainer/UsernameInput"
 
 func load_profile_data() -> Dictionary:
