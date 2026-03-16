@@ -1,7 +1,16 @@
 extends Node
 class_name NetworkManager
 
-@onready var user: UserManager = $UserManager
+enum ConnectionState {
+	IDLE,
+	CONNECTING,
+	CONNECTED,
+	RETRY_WAIT
+}
+
+@onready var auth_context: AuthContext = $AuthContext
+@onready var auth_state_machine: AuthStateMachine = $AuthStateMachine
+@onready var world_sync: WorldSync = $WorldSync
 @onready var game_manager: GameManager = $"../GameManager"
 
 const HEAD_BASE_URL= "http://127.0.0.1:3000"
@@ -11,20 +20,15 @@ var game_server_url: String
 var lobby_id: String
 
 var game_socket: WebSocketPeer = WebSocketPeer.new()
-var connected: bool = false
+var connection_state: ConnectionState = ConnectionState.IDLE
 # Reconnect state is only used when TEST_MODE is enabled.
 var reconnect_attempts: int = 0
 var reconnect_timer: Timer
-var reconnect_scheduled: bool = false
-var initial_ws_started: bool = false
 
 # Reconnect backoff settings (seconds).
 const RECONNECT_BASE_DELAY: float = 0.5
 const RECONNECT_MAX_DELAY: float = 6.0
 
-var player_scene: PackedScene = preload("res://Scenes/player.tscn")
-var projectile_scene: PackedScene = preload("res://Scenes/projectile.tscn")
-@onready var spawned_nodes: Node = $SpawnedNodes
 @onready var network_ui: Panel = $NetworkUI
 
 func _ready() -> void:
@@ -35,51 +39,68 @@ func _ready() -> void:
 	add_child(reconnect_timer)
 
 	# Start websocket connection only after auth succeeds.
-	user.authenticated.connect(_on_user_authenticated)
+	auth_state_machine.authenticated.connect(_on_auth_authenticated)
 	
 	# If auth is already available when this node starts, connect immediately.
-	if game_manager.TEST_MODE and user.is_authenticated:
-		_start_initial_ws()
+	if game_manager.TEST_MODE and auth_state_machine.is_authenticated():
+		_connect_after_auth()
 	
 func _process(_delta: float) -> void:
-	if user.authenticating:
-		return
-	
-	# Guard login on guest_id availability; calling login too early can cause
-	# repeated auth failures/noisy loops while guest init is still in flight.
-	if not user.is_authenticated and not user.guest_id.is_empty():
-		user.login()
-		return
-	
+	_poll_socket()
+	_handle_socket_state()
+
+func _poll_socket() -> void:
+	# Polling advances the Godot WebSocket state machine.
 	game_socket.poll()
-	var state = game_socket.get_ready_state()
-	
-	if state == WebSocketPeer.STATE_OPEN:
-		if not connected:
-			connected = true
-			_connected_to_server()
-		
-		# Process incoming packets
-		while game_socket.get_available_packet_count() > 0:
-			var packet = game_socket.get_packet()
-			var data_str = packet.get_string_from_utf8()
-			_handle_server_message(data_str)
-			
-	elif state == WebSocketPeer.STATE_CLOSED:
-		if connected:
-			connected = false
-			_server_closed()
-		# Schedule reconnects in test mode when the server restarts.
-		_schedule_reconnect("socket closed")
+
+func _handle_socket_state() -> void:
+	var socket_state := game_socket.get_ready_state()
+
+	match socket_state:
+		WebSocketPeer.STATE_OPEN:
+			_handle_socket_open()
+		WebSocketPeer.STATE_CLOSED:
+			_handle_socket_closed()
+
+func _handle_socket_open() -> void:
+	# Promote to CONNECTED only once per socket lifetime.
+	if connection_state != ConnectionState.CONNECTED:
+		connection_state = ConnectionState.CONNECTED
+		_on_socket_opened()
+
+	_drain_incoming_packets()
+
+func _handle_socket_closed() -> void:
+	if connection_state == ConnectionState.CONNECTED:
+		connection_state = ConnectionState.IDLE
+		_on_socket_closed()
+		return
+
+	if connection_state == ConnectionState.CONNECTING:
+		connection_state = ConnectionState.IDLE
+		_on_socket_connect_failed()
+
+func has_open_connection() -> bool:
+	return connection_state == ConnectionState.CONNECTED
+
+func _drain_incoming_packets() -> void:
+	# Drain all buffered frames before the next process tick.
+	while game_socket.get_available_packet_count() > 0:
+		var packet := game_socket.get_packet()
+		var data_str := packet.get_string_from_utf8()
+		_handle_server_message(data_str)
 
 func start_client(url: String) -> void:
 	# Always reset the socket before connecting to avoid stale states.
 	_reset_socket()
 	print("Connecting to %s..." % url)
-	var err = game_socket.connect_to_url(url)
+	var err := game_socket.connect_to_url(url)
 	if err != OK:
 		print("Connection error: %s" % err)
-		_connection_failed()
+		_on_socket_connect_failed()
+		return
+
+	connection_state = ConnectionState.CONNECTING
 
 func join_test_lobby() -> void:
 	start_client(TEST_SERVER_URL)
@@ -108,108 +129,51 @@ func _handle_server_message(json_str: String) -> void:
 	if not (msg is Dictionary and msg.has("type")):
 		return
 
+	# Transport only routes messages; scene mutation lives in WorldSync.
 	match msg.type:
 		"Identity":
 			# { "type": "Identity", "data": { "player_id": 123 } }
 			if msg.data.has("player_id"):
-				user.local_player_id = msg.data.player_id
-				print("Assigned Player ID: ", user.local_player_id)
+				auth_context.local_player_id = msg.data.player_id
+				print("Assigned Player ID: ", auth_context.local_player_id)
 		"WorldUpdate":
 			# { "type": "WorldUpdate", "data": { "tick": 1, "entities": [...] } }
 			if msg.data.has("entities"):
-				_handle_world_update(msg.data)
+				world_sync.apply_world_update(msg.data)
 				
 		"GameState":
 			# { "type": "GameState", "data": { ... } } or "MatchRunning"
 			print("Game State Update: ", msg.data)
 
-func _handle_world_update(data: Dictionary) -> void:
-	var entities = data.entities
-	var projectiles = []
-	if data.has("projectiles"):
-		projectiles = data.projectiles
-	
-	var current_player_ids = []
-	var current_projectile_ids = []
-
-	for entity_data in entities:
-		# entity_data has: id, x, y, rot
-		var id = entity_data.id
-		current_player_ids.append(id)
-		
-		if spawned_nodes.has_node(str(id)):
-			var player = spawned_nodes.get_node(str(id))
-			if player.has_method("update_state"):
-				player.update_state(entity_data)
-		else:
-			print("Spawning player ", id)
-			var player = player_scene.instantiate()
-			player.name = str(id)
-			player.player_id = id
-			spawned_nodes.add_child(player, true)
-			if player.has_method("update_state"):
-				player.update_state(entity_data)
-
-	for proj_data in projectiles:
-		# proj_data has: id, owner_id, x, y, rot
-		var proj_id = int(proj_data.id)
-		current_projectile_ids.append(proj_id)
-		var node_name = "proj_%s" % proj_id
-		
-		if spawned_nodes.has_node(node_name):
-			var proj = spawned_nodes.get_node(node_name)
-			if proj.has_method("update_state"):
-				proj.update_state(proj_data)
-		else:
-			var proj = projectile_scene.instantiate()
-			proj.name = node_name
-			proj.projectile_id = proj_id
-			proj.owner_id = int(proj_data.owner_id)
-			spawned_nodes.add_child(proj, true)
-			if proj.has_method("update_state"):
-				proj.update_state(proj_data)
-
-	# Despawn missing players/projectiles
-	for node in spawned_nodes.get_children():
-		if node is Player:
-			if node.player_id not in current_player_ids:
-				print("Despawning player ", node.player_id)
-				node.queue_free()
-		elif node is Projectile:
-			if node.projectile_id not in current_projectile_ids:
-				node.queue_free()
-
-func _connected_to_server() -> void:
+func _on_socket_opened() -> void:
 	print("Connected to server")
 	network_ui.visible = false
 	# Successful connection resets the reconnect backoff.
 	reconnect_attempts = 0
-	reconnect_scheduled = false
 	reconnect_timer.stop()
-	if user.is_authenticated:
+	if auth_state_machine.is_authenticated():
 		_send_join()
 
-func _on_user_authenticated(_session_token: String) -> void:
+func _on_auth_authenticated(_session_token: String) -> void:
 	if not game_manager.TEST_MODE:
 		return
-	_start_initial_ws()
+	_connect_after_auth()
 
-func _start_initial_ws() -> void:
+func _connect_after_auth() -> void:
 	# Guard against duplicate connect attempts from startup + signal timing.
-	if initial_ws_started:
+	if connection_state != ConnectionState.IDLE:
 		return
-	initial_ws_started = true
 	start_client(TEST_SERVER_URL)
 
-func _connection_failed() -> void:
+func _on_socket_connect_failed() -> void:
 	print("Connection failed")
 	# Attempt to reconnect in test mode if the server is still rebooting.
 	_schedule_reconnect("connection failed")
 
-func _server_closed() -> void:
+func _on_socket_closed() -> void:
 	print("Server has been closed")
 	network_ui.visible = true
-	spawned_nodes.get_children().map(func(n): n.queue_free())
+	world_sync.clear_world()
 	# Attempt to reconnect in test mode if the server restarts.
 	_schedule_reconnect("server closed")
 
@@ -218,7 +182,7 @@ func _send_join() -> void:
 	if game_socket.get_ready_state() != WebSocketPeer.STATE_OPEN:
 		return
 
-	if user.auth_token.strip_edges().is_empty():
+	if auth_context.auth_token.strip_edges().is_empty():
 		push_error("Missing auth token for join")
 		return
 	
@@ -226,7 +190,7 @@ func _send_join() -> void:
 	var message = {
 		"type": "Join",
 		"data": {
-			"session_token": user.auth_token
+			"session_token": auth_context.auth_token
 		}
 	}
 	var json_str = JSON.stringify(message)
@@ -237,25 +201,28 @@ func _schedule_reconnect(reason: String) -> void:
 	if not game_manager.TEST_MODE:
 		return
 	# Reconnect only after auth is established; otherwise wait for login flow.
-	if not user.is_authenticated:
+	if not auth_state_machine.is_authenticated():
 		return
-	# Avoid stacking multiple timers or reconnecting while already connecting/open.
-	var state = game_socket.get_ready_state()
-	if reconnect_scheduled or state == WebSocketPeer.STATE_OPEN or state == WebSocketPeer.STATE_CONNECTING:
+	# Avoid stacking multiple timers or reconnecting while already active.
+	if connection_state == ConnectionState.CONNECTED \
+		or connection_state == ConnectionState.CONNECTING \
+		or connection_state == ConnectionState.RETRY_WAIT:
 		return
 	reconnect_attempts += 1
-	var delay = min(RECONNECT_BASE_DELAY * pow(2.0, float(reconnect_attempts - 1)), RECONNECT_MAX_DELAY)
-	reconnect_scheduled = true
+	var delay: float = min(
+		RECONNECT_BASE_DELAY * pow(2.0, float(reconnect_attempts - 1)),
+		RECONNECT_MAX_DELAY
+	)
+	connection_state = ConnectionState.RETRY_WAIT
 	print("Reconnect scheduled in %s seconds (%s)" % [delay, reason])
 	reconnect_timer.start(delay)
 
 func _on_reconnect_timeout() -> void:
-	# Clear the scheduled flag before attempting to connect.
-	reconnect_scheduled = false
 	# In test mode, the server is fixed; attempt to reconnect.
+	connection_state = ConnectionState.IDLE
 	start_client(TEST_SERVER_URL)
 
 func _reset_socket() -> void:
 	# Replace the peer to ensure a clean reconnect after server restarts.
 	game_socket = WebSocketPeer.new()
-	connected = false
+	connection_state = ConnectionState.IDLE
