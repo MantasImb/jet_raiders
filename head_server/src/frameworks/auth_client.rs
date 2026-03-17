@@ -2,7 +2,7 @@ use crate::use_cases::{
     AuthProvider, AuthProviderError, GuestInit, GuestInitResult, GuestLogin, GuestLoginResult,
 };
 use async_trait::async_trait;
-use reqwest::{Client, StatusCode};
+use reqwest::{Client, Response, StatusCode};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone)]
@@ -60,11 +60,7 @@ impl AuthProvider for AuthClient {
             .send()
             .await
             .map_err(|_| AuthProviderError::UpstreamUnavailable)?;
-
-        let status = response.status();
-        if !status.is_success() {
-            return Err(map_status_to_error(status));
-        }
+        let response = ensure_success_response(response).await?;
 
         let payload = response
             .json::<AuthGuestInitResponse>()
@@ -93,11 +89,7 @@ impl AuthProvider for AuthClient {
             .send()
             .await
             .map_err(|_| AuthProviderError::UpstreamUnavailable)?;
-
-        let status = response.status();
-        if !status.is_success() {
-            return Err(map_status_to_error(status));
-        }
+        let response = ensure_success_response(response).await?;
 
         let payload = response
             .json::<AuthGuestLoginResponse>()
@@ -109,6 +101,17 @@ impl AuthProvider for AuthClient {
             expires_at: payload.expires_at,
         })
     }
+}
+
+async fn ensure_success_response(response: Response) -> Result<Response, AuthProviderError> {
+    let status = response.status();
+    if status.is_success() {
+        return Ok(response);
+    }
+
+    // Drain the response body so the underlying connection can be reused.
+    let _ = response.bytes().await;
+    Err(map_status_to_error(status))
 }
 
 fn map_status_to_error(status: StatusCode) -> AuthProviderError {

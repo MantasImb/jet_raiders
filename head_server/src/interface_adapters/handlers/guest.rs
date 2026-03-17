@@ -2,12 +2,9 @@ use crate::interface_adapters::protocol::{
     HeadGuestInitRequest, HeadGuestInitResponse, HeadGuestLoginRequest, HeadGuestLoginResponse,
 };
 use crate::interface_adapters::state::AppState;
-use crate::use_cases::{
-    AuthProviderError, GuestInit, GuestLogin, GuestLoginResult, GuestSessionService,
-};
-use async_trait::async_trait;
+use crate::use_cases::{AuthProviderError, GuestInit, GuestLogin};
 use axum::{Json, extract::State, http::StatusCode};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 #[tracing::instrument(name = "guest_init", skip_all)]
 pub async fn guest_init(
@@ -99,7 +96,9 @@ fn map_guest_session_error(error: &AuthProviderError) -> StatusCode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::use_cases::{AuthProvider, GuestInitResult};
+    use crate::use_cases::{AuthProvider, GuestInitResult, GuestLoginResult, GuestSessionService};
+    use async_trait::async_trait;
+    use std::sync::Mutex;
 
     #[derive(Default)]
     struct MockAuthProvider {
