@@ -5,8 +5,10 @@ flowchart TD
     F[Frameworks - server.rs] --> R[Interface Adapters - routes.rs]
     R --> H[Interface Adapters - handlers/guest.rs]
     H --> S[Interface Adapters - state.rs]
-    H --> C[Interface Adapters - clients.rs - AuthClient]
-    C --> D[Domain - auth.rs - AuthProvider]
+    H --> U[Use Cases - guest.rs - GuestSessionService]
+    U --> P[Use Cases - guest.rs - AuthProvider]
+    F --> C[Frameworks - auth_client.rs - AuthClient]
+    C --> P
 ```
 
 ## Purpose
@@ -23,7 +25,8 @@ under `head_server/`.
 ## Current Scope (Implemented)
 
 - Accept guest identity/session requests from clients.
-- Call `auth_server` to create guest identities and guest sessions.
+- Orchestrate guest identity/session flows through use cases.
+- Call `auth_server` to create guest identities and guest sessions via a port.
 - Return head-level response DTOs suitable for client usage.
 
 ## HTTP API (Implemented)
@@ -88,6 +91,13 @@ Success response:
 ## Dependencies
 
 - `auth_server` for guest identity/session operations.
+
+## Layer Notes
+
+- `interface_adapters/` owns head HTTP DTOs, request validation, and HTTP error mapping.
+- `use_cases/` owns guest session orchestration and the `AuthProvider` port.
+- `frameworks/` owns the concrete reqwest auth client and runtime wiring.
+- `domain/` is reserved for future head-specific business entities and invariants.
 
 ## Planned (Not Implemented Yet)
 

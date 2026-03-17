@@ -1,1 +1,6 @@
-// Use case modules will live here as application logic expands.
+pub mod guest;
+
+pub use guest::{
+    AuthProvider, AuthProviderError, GuestInit, GuestInitResult, GuestLogin, GuestLoginResult,
+    GuestSessionService,
+};

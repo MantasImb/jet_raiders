@@ -9,7 +9,8 @@ This layer contains the business logic for the head service.
 
 - Use-case orchestrators and application services.
 - Policy decisions and workflow sequencing.
-- Interfaces to external systems via domain ports.
+- Interfaces to external systems via use-case ports.
+- Application request/response types shared across boundaries.
 
 ## What does not belong here
 
@@ -19,10 +20,11 @@ This layer contains the business logic for the head service.
 
 ## Current contents
 
-- No use cases yet. Add orchestrators as features grow.
+- `guest.rs` orchestrates guest init/login flows.
+- `guest.rs` defines the `AuthProvider` port and application-level errors.
 
 ## Communication
 
-- Depends on domain types and port traits.
+- Depends on domain types and locally defined port traits.
 - Called by interface adapters such as HTTP handlers.
 - Invokes port traits to reach external systems.
