@@ -1,7 +1,1 @@
-mod auth;
-
-// Re-export the domain boundary types and ports.
-pub use auth::{
-    AuthGuestInitRequest, AuthGuestInitResponse, AuthGuestRequest, AuthGuestResponse,
-    AuthProvider,
-};
+// Domain types will live here when head-specific business entities are introduced.

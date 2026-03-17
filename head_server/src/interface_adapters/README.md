@@ -9,8 +9,9 @@ responses or other delivery formats.
 
 - HTTP handlers and route wiring.
 - Request and response DTOs for the wire format.
-- State containers holding port implementations.
-- Client adapters that implement domain ports.
+- State containers holding use-case services.
+- Validation and mapping between HTTP DTOs and application inputs.
+- HTTP-specific error translation.
 
 ## What does not belong here
 
@@ -20,14 +21,13 @@ responses or other delivery formats.
 
 ## Current contents
 
-- `handlers/guest.rs` handles guest login HTTP requests.
+- `handlers/guest.rs` handles guest HTTP requests.
 - `routes.rs` wires HTTP routes to handlers.
 - `protocol.rs` defines HTTP request/response DTOs.
-- `clients.rs` implements the `AuthProvider` port via HTTP.
 - `state.rs` holds runtime dependencies for handlers.
 
 ## Communication
 
-- Receives HTTP requests and maps them to domain requests.
-- Calls use cases or domain ports through trait objects.
+- Receives HTTP requests and maps them to application inputs.
+- Calls use cases through injected services.
 - Returns DTOs to the client over HTTP.

@@ -1,6 +1,7 @@
-use crate::interface_adapters::clients::AuthClient;
+use crate::frameworks::auth_client::AuthClient;
 use crate::interface_adapters::routes;
 use crate::interface_adapters::state::AppState;
+use crate::use_cases::GuestSessionService;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -62,8 +63,9 @@ pub async fn run() {
         std::env::var("AUTH_SERVICE_URL").unwrap_or_else(|_| "http://localhost:3002".into());
     tracing::debug!(auth_base_url = %auth_base_url, "auth client configured.");
     let auth = Arc::new(AuthClient::new(auth_base_url));
+    let guest_sessions = Arc::new(GuestSessionService::new(auth.clone()));
 
-    let state = Arc::new(AppState { auth });
+    let state = Arc::new(AppState { guest_sessions });
 
     // Start the web server with the HTTP routes wired up.
     let app = routes::app(state);

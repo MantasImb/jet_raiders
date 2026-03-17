@@ -35,12 +35,13 @@ graph TD
 
 ## 3. Current State and Target State
 
-Status snapshot as of **February 28, 2026**:
+Status snapshot as of **March 17, 2026**:
 
 - `auth_server/`, `head_server/`, `game_server/`, and `matchmaking_server/`
   are runnable Rust services.
-- `head_server/` currently exposes guest identity/session HTTP APIs and forwards
-  those flows to `auth_server/`.
+- `head_server/` currently exposes guest identity/session HTTP APIs, routes
+  them through use-case orchestration, and calls `auth_server/` through an
+  injected auth port.
 - `website/` is still in scaffold/placeholder stage.
 - The active Godot project lives in `game_client/`.
 
@@ -118,6 +119,13 @@ Current implemented head-service entrypoints:
   `guest_id`, `session_token`, and `expires_at`.
 - `POST /guest/login`: creates/refreshes guest session through auth and returns
   `session_token` and `expires_at`.
+
+Current guest-flow layering inside `head_server/`:
+
+- `interface_adapters/handlers/guest.rs`: parses HTTP input and maps HTTP
+  responses.
+- `use_cases/guest.rs`: owns guest init/login orchestration and the auth port.
+- `frameworks/auth_client.rs`: implements the auth port with reqwest.
 
 ## 8. Protocol and Tick Model (Planned Interface)
 

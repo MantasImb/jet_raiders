@@ -1,35 +1,44 @@
-use crate::domain::{AuthGuestInitRequest, AuthGuestRequest};
-use crate::interface_adapters::clients::AuthClientError;
 use crate::interface_adapters::protocol::{
     HeadGuestInitRequest, HeadGuestInitResponse, HeadGuestLoginRequest, HeadGuestLoginResponse,
 };
 use crate::interface_adapters::state::AppState;
+use crate::use_cases::{
+    AuthProviderError, GuestInit, GuestLogin, GuestLoginResult, GuestSessionService,
+};
+use async_trait::async_trait;
 use axum::{Json, extract::State, http::StatusCode};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 #[tracing::instrument(name = "guest_init", skip_all)]
 pub async fn guest_init(
     State(state): State<Arc<AppState>>,
     Json(body): Json<HeadGuestInitRequest>,
 ) -> Result<Json<HeadGuestInitResponse>, StatusCode> {
-    // Map the head request into the auth init payload.
-    let auth_req = AuthGuestInitRequest {
+    // Convert the HTTP request into an application command.
+    let request = GuestInit {
         display_name: body.display_name,
     };
 
-    // Call auth to create a first-time guest identity and session.
-    let auth_res = state.auth.create_guest_identity(auth_req).await.map_err(|e| {
-        tracing::error!(error = ?e, "failed to create guest identity.");
-        map_auth_provider_error(e.as_ref())
-    })?;
+    // Delegate workflow orchestration to the use-case layer.
+    let result = state
+        .guest_sessions
+        .guest_init(request)
+        .await
+        .map_err(|error| {
+            tracing::error!(?error, "failed to create guest identity.");
+            map_guest_session_error(&error)
+        })?;
 
-    tracing::info!(guest_id = auth_res.guest_id, "guest identity created successfully.");
+    tracing::info!(
+        guest_id = result.guest_id,
+        "guest identity created successfully."
+    );
 
     Ok(Json(HeadGuestInitResponse {
         // Keep guest_id stringly-typed on the client boundary to avoid JSON number precision loss.
-        guest_id: auth_res.guest_id.to_string(),
-        session_token: auth_res.token,
-        expires_at: auth_res.expires_at,
+        guest_id: result.guest_id.to_string(),
+        session_token: result.session_token,
+        expires_at: result.expires_at,
     }))
 }
 
@@ -42,53 +51,140 @@ pub async fn guest_login(
     State(state): State<Arc<AppState>>,
     Json(body): Json<HeadGuestLoginRequest>,
 ) -> Result<Json<HeadGuestLoginResponse>, StatusCode> {
-    // Parse guest_id at the adapter boundary; domain/auth paths keep numeric IDs.
+    // Parse guest_id at the adapter boundary; application paths keep numeric IDs.
     let guest_id = body
         .guest_id
         .trim()
         .parse::<u64>()
         .map_err(|_| StatusCode::BAD_REQUEST)?;
 
-    // Map the head request into the auth request payload.
-    let auth_req = AuthGuestRequest {
+    // Convert the HTTP request into an application command.
+    let request = GuestLogin {
         guest_id,
         display_name: body.display_name,
     };
 
-    // Call auth to create or validate the guest session.
-    let auth_res = state
-        .auth
-        .create_guest_session(auth_req)
+    // Delegate workflow orchestration to the use-case layer.
+    let result = state
+        .guest_sessions
+        .guest_login(request)
         .await
-        .map_err(|e| {
-            tracing::error!(error = ?e, "failed to create guest session.");
-            map_auth_provider_error(e.as_ref())
+        .map_err(|error| {
+            tracing::error!(?error, "failed to create guest session.");
+            map_guest_session_error(&error)
         })?;
 
     tracing::info!("guest session created successfully.");
 
     // Return the session token to the client.
     Ok(Json(HeadGuestLoginResponse {
-        session_token: auth_res.token,
-        expires_at: auth_res.expires_at,
+        session_token: result.session_token,
+        expires_at: result.expires_at,
     }))
 }
 
-fn map_auth_provider_error(err: &(dyn std::error::Error + 'static)) -> StatusCode {
-    // Preserve upstream client errors for better API semantics and UX.
-    if let Some(auth_err) = err.downcast_ref::<AuthClientError>() {
-        if let AuthClientError::Upstream { status, .. } = auth_err {
-            return match *status {
-                StatusCode::BAD_REQUEST => StatusCode::BAD_REQUEST,
-                StatusCode::UNAUTHORIZED => StatusCode::UNAUTHORIZED,
-                StatusCode::FORBIDDEN => StatusCode::FORBIDDEN,
-                StatusCode::NOT_FOUND => StatusCode::NOT_FOUND,
-                StatusCode::UNPROCESSABLE_ENTITY => StatusCode::UNPROCESSABLE_ENTITY,
-                _ if status.is_client_error() => StatusCode::BAD_REQUEST,
-                _ => StatusCode::BAD_GATEWAY,
-            };
+fn map_guest_session_error(error: &AuthProviderError) -> StatusCode {
+    match error {
+        AuthProviderError::BadRequest => StatusCode::BAD_REQUEST,
+        AuthProviderError::Unauthorized => StatusCode::UNAUTHORIZED,
+        AuthProviderError::Forbidden => StatusCode::FORBIDDEN,
+        AuthProviderError::NotFound => StatusCode::NOT_FOUND,
+        AuthProviderError::UnprocessableEntity => StatusCode::UNPROCESSABLE_ENTITY,
+        AuthProviderError::UpstreamUnavailable | AuthProviderError::Unexpected => {
+            StatusCode::BAD_GATEWAY
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::use_cases::{AuthProvider, GuestInitResult};
+
+    #[derive(Default)]
+    struct MockAuthProvider {
+        init_response: Mutex<Option<Result<GuestInitResult, AuthProviderError>>>,
+        login_response: Mutex<Option<Result<GuestLoginResult, AuthProviderError>>>,
+    }
+
+    #[async_trait]
+    impl AuthProvider for MockAuthProvider {
+        async fn create_guest_identity(
+            &self,
+            _req: GuestInit,
+        ) -> Result<GuestInitResult, AuthProviderError> {
+            self.init_response
+                .lock()
+                .expect("lock should not be poisoned")
+                .take()
+                .expect("init response should be configured")
+        }
+
+        async fn create_guest_session(
+            &self,
+            _req: GuestLogin,
+        ) -> Result<GuestLoginResult, AuthProviderError> {
+            self.login_response
+                .lock()
+                .expect("lock should not be poisoned")
+                .take()
+                .expect("login response should be configured")
         }
     }
 
-    StatusCode::BAD_GATEWAY
+    fn app_state(auth: Arc<dyn AuthProvider>) -> Arc<AppState> {
+        Arc::new(AppState {
+            guest_sessions: Arc::new(GuestSessionService::new(auth)),
+        })
+    }
+
+    #[tokio::test]
+    async fn guest_login_rejects_invalid_guest_id() {
+        let state = app_state(Arc::new(MockAuthProvider::default()));
+        let result = guest_login(
+            State(state),
+            Json(HeadGuestLoginRequest {
+                guest_id: "abc".into(),
+                display_name: "Pilot".into(),
+            }),
+        )
+        .await;
+
+        match result {
+            Ok(_) => panic!("invalid guest ids should fail"),
+            Err(error) => assert_eq!(error, StatusCode::BAD_REQUEST),
+        }
+    }
+
+    #[test]
+    fn auth_provider_errors_map_to_expected_http_status_codes() {
+        assert_eq!(
+            map_guest_session_error(&AuthProviderError::BadRequest),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            map_guest_session_error(&AuthProviderError::Unauthorized),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            map_guest_session_error(&AuthProviderError::Forbidden),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            map_guest_session_error(&AuthProviderError::NotFound),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            map_guest_session_error(&AuthProviderError::UnprocessableEntity),
+            StatusCode::UNPROCESSABLE_ENTITY
+        );
+        assert_eq!(
+            map_guest_session_error(&AuthProviderError::UpstreamUnavailable),
+            StatusCode::BAD_GATEWAY
+        );
+        assert_eq!(
+            map_guest_session_error(&AuthProviderError::Unexpected),
+            StatusCode::BAD_GATEWAY
+        );
+    }
 }

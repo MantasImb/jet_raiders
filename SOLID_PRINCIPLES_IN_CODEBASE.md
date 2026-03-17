@@ -63,8 +63,9 @@ core matchmaking behavior.
 - `game_server/src/use_cases/game.rs` currently owns many responsibilities:
   lobby events, respawn logic, timing, world update composition, and use-case
   orchestration.
-- `head_server/src/domain/auth.rs` includes `serde` DTO coupling in the domain
-  file (noted by its own comment).
+- `head_server/src/use_cases/guest.rs` currently groups both guest init and
+  guest login orchestration in one file. That is acceptable today, but more
+  guest flows should likely be split into smaller modules as the service grows.
 
 ### Implementation direction (concrete)
 
@@ -73,8 +74,8 @@ core matchmaking behavior.
    - `apply_respawn(...)`
    - `drain_input_events(...)`
    - `build_world_update(...)`
-2. Move transport DTO serialization types away from domain contracts in
-   `head_server` into interface adapter protocol modules.
+2. Keep transport DTO serialization types in `head_server` adapter/framework
+   modules, not in inner layers.
 
 ### Why this helps
 
@@ -112,10 +113,10 @@ without rewriting auth business rules.
 
 #### 2) Head server auth client abstraction
 
-`head_server/src/domain/auth.rs` defines `AuthProvider`, and
-`head_server/src/interface_adapters/clients.rs` implements it with `AuthClient`.
-You can add a second provider (for example, a mock provider or alternate auth
-backend) by implementing the trait.
+`head_server/src/use_cases/guest.rs` defines `AuthProvider`, and
+`head_server/src/frameworks/auth_client.rs` implements it with `AuthClient`.
+You can add a second provider, such as a mock provider or alternate auth
+backend, by implementing the trait and wiring it into the framework layer.
 
 ### Where OCP can be improved
 
@@ -163,9 +164,9 @@ while preserving semantics (`now_epoch_seconds`).
 
 #### 3) AuthProvider substitution in head server
 
-Handlers call `create_guest_session` through `AuthProvider`, so another
-implementation can be swapped in if it obeys the same request/response
-expectations.
+`GuestSessionService` calls `create_guest_identity` and
+`create_guest_session` through `AuthProvider`, so another implementation can be
+swapped in if it obeys the same request/response and error expectations.
 
 ### Common LSP risks to watch for
 
@@ -208,8 +209,9 @@ Auth use cases consume only what they need.
 
 #### 2) Focused provider contract in head server
 
-`AuthProvider` has one method for guest session creation, matching the specific
-responsibility needed by the handler.
+`AuthProvider` is still narrowly scoped to guest-session concerns, even though
+it now has separate methods for guest identity creation and guest session
+creation.
 
 ### Where ISP can be improved
 
@@ -225,7 +227,7 @@ Split interfaces by use-case context when growth appears:
 - `TokenVerifierClient`
 - `SessionRevokerClient`
 
-Each handler then depends on exactly one narrow contract.
+Each use case or service then depends on exactly one narrow contract.
 
 ### Why this helps
 
@@ -251,33 +253,32 @@ modules (framework details). Both should depend on abstractions.
 
 This is a direct DIP implementation.
 
-#### 2) Head handler depends on domain abstraction
+#### 2) Head use case depends on application abstraction
 
-- High-level handler: `head_server/src/interface_adapters/handlers/guest.rs`
-- Abstraction: `head_server/src/domain/auth.rs` (`AuthProvider`)
-- Low-level detail: `head_server/src/interface_adapters/clients.rs`
+- High-level use case: `head_server/src/use_cases/guest.rs`
+- Abstraction: `head_server/src/use_cases/guest.rs` (`AuthProvider`)
+- Low-level detail: `head_server/src/frameworks/auth_client.rs`
   (`AuthClient` using `reqwest`)
 
-The handler is protected from `reqwest`-specific details.
+The guest orchestration is protected from `reqwest`-specific details, and the
+HTTP handler only depends on the use-case service.
 
 ### Where DIP can be improved
 
-- `head_server/src/domain/auth.rs` still carries `serde` dependency
-  for request and response DTOs, which blurs boundary ownership.
 - Some game orchestration is still tightly coupled in a single function, making
   policy injection harder.
 
 ### Implementation direction (concrete)
 
-1. Move serialization-focused DTOs to interface adapter protocol modules.
-2. Keep domain traits and domain models serialization-agnostic when possible.
+1. Keep serialization-focused DTOs in interface adapters or frameworks.
+2. Keep inner-layer traits and models serialization-agnostic when possible.
 3. Inject policies/services (e.g., match end conditions, spawn policy) via
    traits into use-case orchestration.
 
 ### Why this helps
 
-- Domain logic becomes easier to reuse and test without HTTP/JSON framework
-  baggage.
+- Inner-layer logic becomes easier to reuse and test without HTTP/JSON
+  framework baggage.
 - Infrastructure changes (`reqwest` replacement, protocol updates) have reduced
   blast radius.
 

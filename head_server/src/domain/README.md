@@ -2,14 +2,13 @@
 
 ## Purpose
 
-Defines the core business rules and ports for the head service. This layer owns
-abstract interfaces and domain data that are independent of frameworks.
+Defines core business entities and invariants for the head service. This layer
+stays independent of frameworks, transport concerns, and use-case ports.
 
 ## What belongs here
 
 - Domain entities and value objects.
-- Port traits (interfaces) consumed by inner layers.
-- Domain request/response types used by ports.
+- Business invariants shared across use cases.
 
 ## What does not belong here
 
@@ -19,10 +18,10 @@ abstract interfaces and domain data that are independent of frameworks.
 
 ## Current contents
 
-- `auth.rs` defines `AuthProvider` and its request/response types.
+- No head-specific domain entities yet.
 
 ## Communication
 
 - Inner layers depend on this layer only.
-- Interface adapters implement the port traits defined here.
-- Use cases call the ports without knowing the concrete implementations.
+- Use cases may introduce head-specific business entities here as the service
+  grows.
