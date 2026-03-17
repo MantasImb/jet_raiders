@@ -60,6 +60,9 @@ func has_valid_guest_id() -> bool:
 func _save_profile() -> void:
 	var file = FileAccess.open(PROFILE_PATH, FileAccess.WRITE)
 	if not file:
+		push_warning(
+			"Failed to open profile for write at %s (error %s)" % [PROFILE_PATH, FileAccess.get_open_error()]
+		)
 		return
 
 	# Persist a minimal guest profile for future sessions.
@@ -72,6 +75,7 @@ func _save_profile() -> void:
 
 func _on_username_input_text_changed(new_text: String) -> void:
 	local_username = new_text
+	# TODO: This writes on every keystroke; debounce or batch it if profile saves become costly.
 	_save_profile()
 	
 func is_display_name_valid() -> bool:
