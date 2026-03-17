@@ -21,7 +21,7 @@ This directory contains the active Jet Raiders Godot client project.
 
 ## Runtime Defaults
 
-- Engine/features: Godot 4.5 (`GL Compatibility` renderer profile).
+- Engine/features: Godot (`GL Compatibility` renderer profile).
 - Test mode: enabled by default (`GameManager.TEST_MODE == true`).
 - Head service base URL: `http://127.0.0.1:3000`
 - Game WebSocket URL (test mode): `ws://127.0.0.1:3001/ws`
@@ -38,9 +38,12 @@ guest login succeeds.
 ## Key Scripts
 
 - `Scripts/GameManager.gd`: game-level state and test mode toggle.
-- `Scripts/UserManager.gd`: guest profile, guest init, and login flow.
-- `Scripts/NetworkManager.gd`: WebSocket lifecycle, join, reconnect, and world
-  snapshot application.
+- `Scripts/AuthContext.gd`: auth and profile state, persistence, and
+  validation helpers.
+- `Scripts/NetworkManager.gd`: WebSocket lifecycle, join, reconnect, and
+  protocol message routing.
+- `Scripts/WorldSync.gd`: scene-level world snapshot application for players
+  and projectiles.
 - `Scripts/PlayerInput.gd`: per-frame local input capture and send.
 - `Scripts/Player.gd`, `Scripts/Projectile.gd`: visual smoothing from server
   snapshots.

@@ -7,14 +7,21 @@ var turn_input: float
 var shoot_input: bool
 
 var network_manager: NetworkManager
-var user: UserManager
+var auth_context: AuthContext
 
 func _ready() -> void:
 	# Find NetworkManager in the scene tree
 	var root = get_tree().get_current_scene()
 	if root.has_node("Network"):
 		network_manager = root.get_node("Network")
-		user = network_manager.get_node("UserManager")
+		if network_manager.has_node("AuthContext"):
+			auth_context = network_manager.get_node("AuthContext")
+			if auth_context == null:
+				push_warning("PlayerInput found Network but AuthContext was null")
+				return
+		else:
+			push_warning("PlayerInput could not find AuthContext under Network")
+			return
 		
 
 var acc := 0.0
@@ -32,14 +39,16 @@ func _physics_process(delta: float) -> void:
 	shoot_input = Input.is_action_pressed("shoot")
 	
 	# 2. Validate Network State
-	if not network_manager or not network_manager.connected:
+	if not network_manager or not network_manager.has_open_connection():
 		return
 		
 	# 3. Check Ownership
 	# Only the local player instance should send inputs to the server.
 	var parent = get_parent()
 	if parent is Player:
-		if parent.player_id != user.local_player_id:
+		if not auth_context:
+			return
+		if parent.player_id != auth_context.local_player_id:
 			return
 		
 		var packet = {
