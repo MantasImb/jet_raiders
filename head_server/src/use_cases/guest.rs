@@ -33,6 +33,7 @@ pub enum AuthProviderError {
     Forbidden,
     NotFound,
     UnprocessableEntity,
+    UnexpectedClientError,
     UpstreamUnavailable,
     Unexpected,
 }
@@ -45,6 +46,9 @@ impl fmt::Display for AuthProviderError {
             AuthProviderError::Forbidden => write!(f, "forbidden"),
             AuthProviderError::NotFound => write!(f, "not found"),
             AuthProviderError::UnprocessableEntity => write!(f, "unprocessable entity"),
+            AuthProviderError::UnexpectedClientError => {
+                write!(f, "unexpected upstream client error")
+            }
             AuthProviderError::UpstreamUnavailable => write!(f, "upstream unavailable"),
             AuthProviderError::Unexpected => write!(f, "unexpected auth provider error"),
         }

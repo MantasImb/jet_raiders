@@ -62,7 +62,17 @@ pub async fn run() {
     let auth_base_url =
         std::env::var("AUTH_SERVICE_URL").unwrap_or_else(|_| "http://localhost:3002".into());
     tracing::debug!(auth_base_url = %auth_base_url, "auth client configured.");
-    let auth = Arc::new(AuthClient::new(auth_base_url));
+    let auth = match AuthClient::new(&auth_base_url) {
+        Ok(client) => Arc::new(client),
+        Err(error) => {
+            tracing::error!(
+                auth_base_url = %auth_base_url,
+                error = %error,
+                "failed to parse AUTH_SERVICE_URL"
+            );
+            return;
+        }
+    };
     let guest_sessions = Arc::new(GuestSessionService::new(auth.clone()));
 
     let state = Arc::new(AppState { guest_sessions });

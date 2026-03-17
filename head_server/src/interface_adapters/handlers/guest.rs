@@ -87,9 +87,9 @@ fn map_guest_session_error(error: &AuthProviderError) -> StatusCode {
         AuthProviderError::Forbidden => StatusCode::FORBIDDEN,
         AuthProviderError::NotFound => StatusCode::NOT_FOUND,
         AuthProviderError::UnprocessableEntity => StatusCode::UNPROCESSABLE_ENTITY,
-        AuthProviderError::UpstreamUnavailable | AuthProviderError::Unexpected => {
-            StatusCode::BAD_GATEWAY
-        }
+        AuthProviderError::UnexpectedClientError
+        | AuthProviderError::UpstreamUnavailable
+        | AuthProviderError::Unexpected => StatusCode::BAD_GATEWAY,
     }
 }
 
@@ -176,6 +176,10 @@ mod tests {
         assert_eq!(
             map_guest_session_error(&AuthProviderError::UnprocessableEntity),
             StatusCode::UNPROCESSABLE_ENTITY
+        );
+        assert_eq!(
+            map_guest_session_error(&AuthProviderError::UnexpectedClientError),
+            StatusCode::BAD_GATEWAY
         );
         assert_eq!(
             map_guest_session_error(&AuthProviderError::UpstreamUnavailable),

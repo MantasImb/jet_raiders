@@ -2,14 +2,29 @@ use crate::use_cases::{
     AuthProvider, AuthProviderError, GuestInit, GuestInitResult, GuestLogin, GuestLoginResult,
 };
 use async_trait::async_trait;
-use reqwest::{Client, Response, StatusCode};
+use reqwest::{Client, Response, StatusCode, Url};
 use serde::{Deserialize, Serialize};
+use std::fmt;
+use std::time::Duration;
 
 #[derive(Clone)]
 pub struct AuthClient {
     http: Client,
-    pub base_url: String,
+    pub base_url: Url,
 }
+
+#[derive(Debug)]
+pub struct AuthClientConfigError {
+    message: String,
+}
+
+impl fmt::Display for AuthClientConfigError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+impl std::error::Error for AuthClientConfigError {}
 
 #[derive(Debug, Serialize)]
 struct AuthGuestInitRequest {
@@ -36,11 +51,30 @@ struct AuthGuestLoginResponse {
 }
 
 impl AuthClient {
-    pub fn new(base_url: impl Into<String>) -> Self {
-        Self {
-            http: Client::new(),
-            base_url: base_url.into(),
+    pub fn new(base_url: &str) -> Result<Self, AuthClientConfigError> {
+        let mut base_url = Url::parse(base_url).map_err(|error| AuthClientConfigError {
+            message: format!("invalid auth base URL: {error}"),
+        })?;
+        if !base_url.path().ends_with('/') {
+            let normalized_path = format!("{}/", base_url.path());
+            base_url.set_path(&normalized_path);
         }
+
+        let http = Client::builder()
+            .connect_timeout(Duration::from_secs(5))
+            .timeout(Duration::from_secs(30))
+            .build()
+            .map_err(|error| AuthClientConfigError {
+                message: format!("failed to build auth HTTP client: {error}"),
+            })?;
+
+        Ok(Self { http, base_url })
+    }
+
+    fn endpoint(&self, path: &str) -> Result<Url, AuthProviderError> {
+        self.base_url
+            .join(path)
+            .map_err(|_| AuthProviderError::Unexpected)
     }
 }
 
@@ -50,7 +84,7 @@ impl AuthProvider for AuthClient {
         &self,
         req: GuestInit,
     ) -> Result<GuestInitResult, AuthProviderError> {
-        let url = format!("{}/auth/guest/init", self.base_url);
+        let url = self.endpoint("auth/guest/init")?;
         let response = self
             .http
             .post(url)
@@ -78,7 +112,7 @@ impl AuthProvider for AuthClient {
         &self,
         req: GuestLogin,
     ) -> Result<GuestLoginResult, AuthProviderError> {
-        let url = format!("{}/auth/guest", self.base_url);
+        let url = self.endpoint("auth/guest")?;
         let response = self
             .http
             .post(url)
@@ -121,7 +155,7 @@ fn map_status_to_error(status: StatusCode) -> AuthProviderError {
         StatusCode::FORBIDDEN => AuthProviderError::Forbidden,
         StatusCode::NOT_FOUND => AuthProviderError::NotFound,
         StatusCode::UNPROCESSABLE_ENTITY => AuthProviderError::UnprocessableEntity,
-        _ if status.is_client_error() => AuthProviderError::BadRequest,
+        _ if status.is_client_error() => AuthProviderError::UnexpectedClientError,
         _ => AuthProviderError::UpstreamUnavailable,
     }
 }
