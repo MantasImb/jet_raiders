@@ -155,6 +155,93 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn guest_login_maps_provider_errors_to_http_status_codes() {
+        let cases = [
+            (AuthProviderError::BadRequest, StatusCode::BAD_REQUEST),
+            (AuthProviderError::Unauthorized, StatusCode::UNAUTHORIZED),
+            (AuthProviderError::Forbidden, StatusCode::FORBIDDEN),
+            (AuthProviderError::NotFound, StatusCode::NOT_FOUND),
+            (
+                AuthProviderError::UnprocessableEntity,
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ),
+            (
+                AuthProviderError::UnexpectedClientError,
+                StatusCode::BAD_GATEWAY,
+            ),
+            (
+                AuthProviderError::UpstreamUnavailable,
+                StatusCode::BAD_GATEWAY,
+            ),
+            (AuthProviderError::Unexpected, StatusCode::BAD_GATEWAY),
+        ];
+
+        for (provider_error, expected_status) in cases {
+            let state = app_state(Arc::new(MockAuthProvider {
+                login_response: Mutex::new(Some(Err(provider_error))),
+                ..Default::default()
+            }));
+
+            let result = guest_login(
+                State(state),
+                Json(HeadGuestLoginRequest {
+                    guest_id: "42".into(),
+                    display_name: "Pilot".into(),
+                }),
+            )
+            .await;
+
+            match result {
+                Ok(_) => panic!("provider errors should fail"),
+                Err(status) => assert_eq!(status, expected_status),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn guest_init_maps_provider_errors_to_http_status_codes() {
+        let cases = [
+            (AuthProviderError::BadRequest, StatusCode::BAD_REQUEST),
+            (AuthProviderError::Unauthorized, StatusCode::UNAUTHORIZED),
+            (AuthProviderError::Forbidden, StatusCode::FORBIDDEN),
+            (AuthProviderError::NotFound, StatusCode::NOT_FOUND),
+            (
+                AuthProviderError::UnprocessableEntity,
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ),
+            (
+                AuthProviderError::UnexpectedClientError,
+                StatusCode::BAD_GATEWAY,
+            ),
+            (
+                AuthProviderError::UpstreamUnavailable,
+                StatusCode::BAD_GATEWAY,
+            ),
+            (AuthProviderError::Unexpected, StatusCode::BAD_GATEWAY),
+        ];
+
+        for (provider_error, expected_status) in cases {
+            let state = app_state(Arc::new(MockAuthProvider {
+                init_response: Mutex::new(Some(Err(provider_error))),
+                ..Default::default()
+            }));
+
+            let result = guest_init(
+                State(state),
+                Json(HeadGuestInitRequest {
+                    display_name: "Pilot".into(),
+                }),
+            )
+            .await;
+
+            match result {
+                Ok(_) => panic!("provider errors should fail"),
+                Err(status) => assert_eq!(status, expected_status),
+            }
+        }
+    }
+
     #[test]
     fn auth_provider_errors_map_to_expected_http_status_codes() {
         assert_eq!(
