@@ -43,7 +43,12 @@ func _on_login_response(response: Dictionary) -> void:
 		_handle_failure("missing_session_token", "Login response did not include session_token")
 		return
 
-	auth_context.auth_token = str(json.session_token)
+	var session_token := str(json.session_token).strip_edges()
+	if session_token.is_empty():
+		_handle_failure("missing_session_token", "Login response did not include a valid session_token")
+		return
+
+	auth_context.auth_token = session_token
 	state_machine.clear_retry(&"login")
 	state_machine.clear_error()
 	set_substate_name(&"SUCCESS")

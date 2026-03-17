@@ -55,7 +55,11 @@ func _ready() -> void:
 	
 	if get_tree().get_current_scene().has_node("Network"):
 		network_manager = get_tree().get_current_scene().get_node("Network")
-		auth_context = network_manager.get_node("AuthContext")
+		if network_manager.has_node("AuthContext"):
+			auth_context = network_manager.get_node("AuthContext")
+		else:
+			push_warning("Player could not find AuthContext under Network")
+			return
 
 	target_position = position
 	target_rotation = rotation
@@ -67,7 +71,7 @@ func update_state(state: Dictionary) -> void:
 		current_hp = int(state.hp)
 	
 	# If this is our local player and game manager doesn't know it yet, register it
-	if network_manager and player_id == auth_context.local_player_id:
+	if network_manager and auth_context and player_id == auth_context.local_player_id:
 		if game_manager and game_manager.local_player != self:
 			game_manager.local_player = self
 			print("Local player registered with GameManager: ", player_id)

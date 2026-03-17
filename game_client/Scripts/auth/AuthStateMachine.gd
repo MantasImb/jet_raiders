@@ -26,7 +26,8 @@ var _transition_map: Dictionary = {
 	&"BootstrapState": [&"GuestIdentityState"],
 	&"GuestIdentityState": [&"LoginState"],
 	&"LoginState": [&"GuestIdentityState", &"AuthenticatedState"],
-	&"AuthenticatedState": []
+	# Allow recovery if authenticated entry invariants are violated.
+	&"AuthenticatedState": [&"LoginState"]
 }
 
 func _ready() -> void:

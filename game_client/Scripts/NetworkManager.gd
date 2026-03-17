@@ -133,12 +133,12 @@ func _handle_server_message(json_str: String) -> void:
 	match msg.type:
 		"Identity":
 			# { "type": "Identity", "data": { "player_id": 123 } }
-			if msg.data.has("player_id"):
-				auth_context.local_player_id = msg.data.player_id
+			if msg.data is Dictionary and msg.data.has("player_id"):
+				auth_context.local_player_id = str(msg.data.player_id)
 				print("Assigned Player ID: ", auth_context.local_player_id)
 		"WorldUpdate":
 			# { "type": "WorldUpdate", "data": { "tick": 1, "entities": [...] } }
-			if msg.data.has("entities"):
+			if msg.data is Dictionary and msg.data.has("entities"):
 				world_sync.apply_world_update(msg.data)
 				
 		"GameState":

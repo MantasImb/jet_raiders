@@ -14,7 +14,14 @@ func _ready() -> void:
 	var root = get_tree().get_current_scene()
 	if root.has_node("Network"):
 		network_manager = root.get_node("Network")
-		auth_context = network_manager.get_node("AuthContext")
+		if network_manager.has_node("AuthContext"):
+			auth_context = network_manager.get_node("AuthContext")
+			if auth_context == null:
+				push_warning("PlayerInput found Network but AuthContext was null")
+				return
+		else:
+			push_warning("PlayerInput could not find AuthContext under Network")
+			return
 		
 
 var acc := 0.0
@@ -39,6 +46,8 @@ func _physics_process(delta: float) -> void:
 	# Only the local player instance should send inputs to the server.
 	var parent = get_parent()
 	if parent is Player:
+		if not auth_context:
+			return
 		if parent.player_id != auth_context.local_player_id:
 			return
 		

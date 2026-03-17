@@ -1,6 +1,9 @@
 extends Node
 class_name AuthApiClient
 
+# Keep auth request timeout centralized so networking behavior is easy to tune.
+const REQUEST_TIMEOUT_SECONDS := 10.0
+
 func request_guest_init(display_name: String, callback: Callable) -> void:
 	_request_json(
 		NetworkManager.HEAD_BASE_URL + "/guest/init",
@@ -23,6 +26,7 @@ func request_guest_login(guest_id: String, display_name: String, callback: Calla
 func _request_json(url: String, payload: Dictionary, callback: Callable) -> void:
 	var http := HTTPRequest.new()
 	add_child(http)
+	http.timeout = REQUEST_TIMEOUT_SECONDS
 	http.request_completed.connect(
 		func(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
 			http.queue_free()

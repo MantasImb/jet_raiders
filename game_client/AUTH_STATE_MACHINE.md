@@ -288,11 +288,12 @@ What `_begin_login()` does:
 When login succeeds:
 
 1. Validate that `session_token` exists in the response.
-2. Store it in `AuthContext.auth_token`.
-3. Clear login retry count.
-4. Clear auth errors.
-5. Set substate to `SUCCESS`.
-6. Transition to `AuthenticatedState`.
+2. Trim the token and reject it if it is empty or whitespace-only.
+3. Store the validated token in `AuthContext.auth_token`.
+4. Clear login retry count.
+5. Clear auth errors.
+6. Set substate to `SUCCESS`.
+7. Transition to `AuthenticatedState`.
 
 When login fails:
 
@@ -334,8 +335,13 @@ Purpose:
 
 What happens on enter:
 
-1. Verify `AuthContext.auth_token` is present.
-2. Emit `AuthStateMachine.authenticated(auth_token)`.
+1. Verify `AuthContext.auth_token` is present and not blank.
+2. If it is blank:
+   - store an auth error in `AuthStateMachine`
+   - clear stale session fields from `AuthContext`
+   - transition back to `LoginState`
+3. If it is valid:
+   - emit `AuthStateMachine.authenticated(auth_token)`
 
 What happens on exit:
 
@@ -353,6 +359,7 @@ Top-level transitions allowed by `AuthStateMachine`:
 - `GuestIdentityState -> LoginState`
 - `LoginState -> GuestIdentityState`
 - `LoginState -> AuthenticatedState`
+- `AuthenticatedState -> LoginState`
 
 Anything else is rejected as an invalid transition.
 

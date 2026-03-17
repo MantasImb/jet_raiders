@@ -52,11 +52,12 @@ Transport message format is JSON with a top-level wrapper:
    to `LoginState`.
 6. `LoginState` enters substate `IDLE_READY` and immediately starts login for
    the current guest auth flow.
-7. `LoginState` calls `POST /guest/login` and stores `session_token` in
-   `AuthContext.auth_token`.
+7. `LoginState` calls `POST /guest/login`, trims `session_token`, and only
+   stores it in `AuthContext.auth_token` if the token is non-blank.
 8. On success, the FSM transitions to `AuthenticatedState`.
 9. `AuthenticatedState` emits `authenticated(session_token)` from
-    `AuthStateMachine`.
+   `AuthStateMachine` only when `auth_token` is still valid; otherwise it
+   recovers by transitioning back to `LoginState`.
 10. `NetworkManager` opens a WebSocket connection to the game server.
 11. After socket open, `NetworkManager` sends a `Join` message containing the
     auth `session_token`.
@@ -124,8 +125,10 @@ Top-level state meanings:
 - `GuestIdentityState`: loads profile, validates `guest_id`, requests
   `/guest/init` when needed, and retries with backoff.
 - `LoginState`: handles `login_requested`, calls `/guest/login`, and retries
-  with backoff. In the current guest flow it auto-starts login on entry.
-- `AuthenticatedState`: emits the success signal used by `NetworkManager`.
+  with backoff. In the current guest flow it auto-starts login on entry and
+  only accepts a non-blank trimmed `session_token`.
+- `AuthenticatedState`: emits the success signal used by `NetworkManager`, or
+  returns to `LoginState` if entered without a valid `auth_token`.
 
 Important `GuestIdentityState` substates:
 
