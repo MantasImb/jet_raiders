@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use std::fmt;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use crate::use_cases::{AuthProvider, AuthProviderError, VerifySession};
 
@@ -180,6 +180,7 @@ mod tests {
     use crate::use_cases::{
         GuestInit, GuestInitResult, GuestLogin, GuestLoginResult, VerifySessionResult,
     };
+    use std::sync::Mutex;
 
     #[derive(Default)]
     struct MockAuthProvider {

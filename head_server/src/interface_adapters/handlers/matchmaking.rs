@@ -2,15 +2,9 @@ use crate::interface_adapters::protocol::{
     HeadEnterMatchmakingRequest, HeadMatchmakingResponse, HeadMatchmakingStatus,
 };
 use crate::interface_adapters::state::AppState;
-use crate::use_cases::{
-    AuthProvider, EnterMatchmaking, EnterMatchmakingError, GuestInit, GuestInitResult, GuestLogin,
-    GuestLoginResult, GuestSessionService, MatchmakingEnqueueResult, MatchmakingProvider,
-    MatchmakingProviderError, MatchmakingQueueRequest, MatchmakingService, VerifySession,
-    VerifySessionResult,
-};
-use async_trait::async_trait;
+use crate::use_cases::{EnterMatchmaking, EnterMatchmakingError, MatchmakingEnqueueResult};
 use axum::{Json, extract::State, http::StatusCode};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 #[tracing::instrument(
     name = "enter_matchmaking",
@@ -80,6 +74,14 @@ fn map_matchmaking_error(error: &EnterMatchmakingError) -> StatusCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::use_cases::{
+        AuthProvider, GuestInit, GuestInitResult, GuestLogin, GuestLoginResult,
+        GuestSessionService, MatchmakingProvider, MatchmakingProviderError,
+        MatchmakingQueueRequest, MatchmakingService, VerifySession, VerifySessionResult,
+    };
+    use async_trait::async_trait;
+    use std::sync::{Arc, Mutex};
+
     #[derive(Default)]
     struct MockAuthProvider {
         verify_response:
@@ -160,7 +162,7 @@ mod tests {
         .await;
 
         match result {
-            Ok(_) => panic!("missing player id should fail"),
+            Ok(_) => panic!("missing session token should fail"),
             Err(status) => assert_eq!(status, StatusCode::BAD_REQUEST),
         }
     }

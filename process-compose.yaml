@@ -22,7 +22,6 @@ processes:
       restart: always
 
   matchmaking-server:
-    # Placeholder until the matchmaking service has a runnable binary.
     command: cargo watch -x check -x run
     working_dir: matchmaking_server
     availability:

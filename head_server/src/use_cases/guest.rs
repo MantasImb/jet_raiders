@@ -237,39 +237,4 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn verify_session_delegates_to_auth_provider() {
-        let auth = Arc::new(MockAuthProvider {
-            verify_response: Mutex::new(Some(Ok(VerifySessionResult {
-                user_id: 42,
-                display_name: "Pilot".into(),
-                session_id: "session-1".into(),
-                expires_at: 123,
-            }))),
-            ..Default::default()
-        });
-
-        let result = auth
-            .verify_session(VerifySession {
-                session_token: "token-123".into(),
-            })
-            .await
-            .expect("verify should succeed");
-
-        assert_eq!(
-            result,
-            VerifySessionResult {
-                user_id: 42,
-                display_name: "Pilot".into(),
-                session_id: "session-1".into(),
-                expires_at: 123,
-            }
-        );
-        assert_eq!(
-            auth.verify_requests.lock().unwrap().as_slice(),
-            &[VerifySession {
-                session_token: "token-123".into(),
-            }]
-        );
-    }
 }

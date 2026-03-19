@@ -54,10 +54,13 @@ pub struct HeadMatchmakingResponse {
     // Queue status returned by head after delegating to matchmaking.
     pub status: HeadMatchmakingStatus,
     // Waiting ticket returned when no immediate match is available.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub ticket_id: Option<String>,
     // Match identifier returned when a match is found immediately.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub match_id: Option<String>,
     // Opponent identifier currently surfaced from the upstream match result.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub opponent_id: Option<String>,
     // Region that the queue request was evaluated against.
     pub region: String,
