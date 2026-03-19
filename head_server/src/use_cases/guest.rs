@@ -27,6 +27,19 @@ pub struct GuestLoginResult {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VerifySession {
+    pub session_token: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VerifySessionResult {
+    pub user_id: u64,
+    pub display_name: String,
+    pub session_id: String,
+    pub expires_at: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AuthProviderError {
     BadRequest,
     Unauthorized,
@@ -68,6 +81,11 @@ pub trait AuthProvider: Send + Sync {
         &self,
         req: GuestLogin,
     ) -> Result<GuestLoginResult, AuthProviderError>;
+
+    async fn verify_session(
+        &self,
+        req: VerifySession,
+    ) -> Result<VerifySessionResult, AuthProviderError>;
 }
 
 #[derive(Clone)]
@@ -104,8 +122,10 @@ mod tests {
     struct MockAuthProvider {
         init_requests: Mutex<Vec<GuestInit>>,
         login_requests: Mutex<Vec<GuestLogin>>,
+        verify_requests: Mutex<Vec<VerifySession>>,
         init_response: Mutex<Option<Result<GuestInitResult, AuthProviderError>>>,
         login_response: Mutex<Option<Result<GuestLoginResult, AuthProviderError>>>,
+        verify_response: Mutex<Option<Result<VerifySessionResult, AuthProviderError>>>,
     }
 
     #[async_trait]
@@ -132,6 +152,18 @@ mod tests {
                 .unwrap()
                 .take()
                 .expect("login response should be configured")
+        }
+
+        async fn verify_session(
+            &self,
+            req: VerifySession,
+        ) -> Result<VerifySessionResult, AuthProviderError> {
+            self.verify_requests.lock().unwrap().push(req);
+            self.verify_response
+                .lock()
+                .unwrap()
+                .take()
+                .expect("verify response should be configured")
         }
     }
 
@@ -201,6 +233,42 @@ mod tests {
             &[GuestLogin {
                 guest_id: 7,
                 display_name: "Pilot".into(),
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn verify_session_delegates_to_auth_provider() {
+        let auth = Arc::new(MockAuthProvider {
+            verify_response: Mutex::new(Some(Ok(VerifySessionResult {
+                user_id: 42,
+                display_name: "Pilot".into(),
+                session_id: "session-1".into(),
+                expires_at: 123,
+            }))),
+            ..Default::default()
+        });
+
+        let result = auth
+            .verify_session(VerifySession {
+                session_token: "token-123".into(),
+            })
+            .await
+            .expect("verify should succeed");
+
+        assert_eq!(
+            result,
+            VerifySessionResult {
+                user_id: 42,
+                display_name: "Pilot".into(),
+                session_id: "session-1".into(),
+                expires_at: 123,
+            }
+        );
+        assert_eq!(
+            auth.verify_requests.lock().unwrap().as_slice(),
+            &[VerifySession {
+                session_token: "token-123".into(),
             }]
         );
     }

@@ -34,6 +34,8 @@ Durable decisions that apply across all phases:
 
 **User stories**: 3, 4, 13
 
+**Status**: Implemented in `head_server`.
+
 ### What to build
 
 Add a client-facing matchmaking entry flow to head that follows the same
@@ -49,15 +51,15 @@ match result from the existing matchmaking behavior.
 
 ### Acceptance criteria
 
-- [ ] The head server exposes a client-facing endpoint to enter matchmaking.
-- [ ] Head uses a dedicated matchmaking port/client rather than embedding HTTP
+- [x] The head server exposes a client-facing endpoint to enter matchmaking.
+- [x] Head uses a dedicated matchmaking port/client rather than embedding HTTP
       concerns in the use-case layer.
-- [ ] A request that does not immediately match returns `waiting` with
+- [x] A request that does not immediately match returns `waiting` with
       `ticket_id` and `region`.
-- [ ] An immediate upstream match result is surfaced cleanly through head.
-- [ ] Request validation and upstream error mapping follow the same quality bar
+- [x] An immediate upstream match result is surfaced cleanly through head.
+- [x] Request validation and upstream error mapping follow the same quality bar
       as the existing guest auth handlers.
-- [ ] Use-case and adapter tests cover the new enqueue path.
+- [x] Use-case and adapter tests cover the new enqueue path.
 
 ---
 

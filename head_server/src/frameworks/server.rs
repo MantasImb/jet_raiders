@@ -1,7 +1,8 @@
 use crate::frameworks::auth_client::AuthClient;
+use crate::frameworks::matchmaking_client::MatchmakingClient;
 use crate::interface_adapters::routes;
 use crate::interface_adapters::state::AppState;
-use crate::use_cases::GuestSessionService;
+use crate::use_cases::{GuestSessionService, MatchmakingService};
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -74,8 +75,29 @@ pub async fn run() {
         }
     };
     let guest_sessions = Arc::new(GuestSessionService::new(auth.clone()));
+    let matchmaking_base_url =
+        std::env::var("MATCHMAKING_SERVICE_URL").unwrap_or_else(|_| "http://localhost:3003".into());
+    tracing::debug!(
+        matchmaking_base_url = %matchmaking_base_url,
+        "matchmaking client configured."
+    );
+    let matchmaking = match MatchmakingClient::new(&matchmaking_base_url) {
+        Ok(client) => Arc::new(client),
+        Err(error) => {
+            tracing::error!(
+                matchmaking_base_url = %matchmaking_base_url,
+                error = %error,
+                "failed to parse MATCHMAKING_SERVICE_URL"
+            );
+            return;
+        }
+    };
+    let matchmaking = Arc::new(MatchmakingService::new(auth.clone(), matchmaking));
 
-    let state = Arc::new(AppState { guest_sessions });
+    let state = Arc::new(AppState {
+        guest_sessions,
+        matchmaking,
+    });
 
     // Start the web server with the HTTP routes wired up.
     let app = routes::app(state);

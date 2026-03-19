@@ -3,8 +3,8 @@
 ## Problem Statement
 
 The head server is intended to be the entry point for the Jet Raiders platform,
-but today it only supports guest initialization and guest login by proxying
-those flows to the auth service.
+and it currently supports guest initialization, guest login, and matchmaking
+queue entry by proxying those flows to the auth and matchmaking services.
 
 The game client still needs a single platform-facing service that can handle
 the full pre-game flow: authenticate as a guest, enter matchmaking, wait for a
@@ -26,17 +26,16 @@ Expand the head server from a guest-auth entrypoint into the platform
 orchestration layer for the game client's pre-game flow.
 
 The head server will continue to proxy guest identity and guest login through
-the auth service. It will also add matchmaking orchestration endpoints for the
-game client:
+the auth service. It also exposes the first matchmaking orchestration endpoint
+for the game client:
 
 - enter matchmaking
 - poll matchmaking status by `ticket_id`
 - cancel matchmaking by `ticket_id`
 
-The matchmaking service will remain the source of truth for queue state. The
-head server will not own matchmaking state; instead, it will proxy queue
-creation, queue status checks, and queue cancellation to the matchmaking
-service.
+The matchmaking service remains the source of truth for queue state. The head
+server does not own matchmaking state; instead, it proxies queue creation,
+queue status checks, and queue cancellation to the matchmaking service.
 
 When the matchmaking service reports a completed match, the head server will:
 
@@ -44,7 +43,7 @@ When the matchmaking service reports a completed match, the head server will:
 2. create a lobby on that game server for the matched players
 3. return the final join information to the client
 
-The matched response from head should include the final connection payload the
+The final matched response from head should include the connection payload the
 client needs to stop polling and proceed to gameplay, including:
 
 - `match_id`
@@ -113,15 +112,13 @@ into dynamic service discovery.
   current product flow that needs it.
 - Matchmaking state ownership remains in the matchmaking service. Head acts as
   a proxy and orchestration layer, not a queue-state store.
-- Head will expose a client-facing endpoint to enter matchmaking.
-- Head will expose a client-facing endpoint to poll matchmaking status using
-  only `ticket_id`.
-- Head will expose a client-facing endpoint to cancel matchmaking using
-  `ticket_id`.
+- Head currently exposes a client-facing endpoint to enter matchmaking.
+- Head will later expose client-facing endpoints to poll matchmaking status
+  using only `ticket_id` and to cancel matchmaking using `ticket_id`.
 - `ticket_id` is treated as an opaque queue handle and effectively acts as a
   bearer secret for poll and cancel in v1.
-- The matchmaking service contract must expand beyond queue entry to also
-  support:
+- The matchmaking service contract will need to expand beyond queue entry to
+  also support:
   - queue status lookup by `ticket_id`
   - queue cancellation by `ticket_id`
 - When polling returns `waiting`, head returns a minimal waiting response and
@@ -158,9 +155,9 @@ into dynamic service discovery.
 - The existing game-server lobby creation flow already supports head-driven
   lobby creation with a lobby identifier and allowed player identifiers. The
   PRD assumes head will use that style of contract.
-- Head will need a matchmaking client module separate from the auth client so
-  that auth integration and matchmaking integration remain isolated behind
-  dedicated ports.
+- Head needs a matchmaking client module separate from the auth client so that
+  auth integration and matchmaking integration remain isolated behind
+  dedicated ports. That client is implemented for queue entry.
 - The head service should introduce head-specific application workflows for:
   - guest auth orchestration
   - matchmaking entry
@@ -199,7 +196,7 @@ into dynamic service discovery.
   - request validation
   - HTTP status mapping
   - DTO conversion
-  - response shape for waiting, matched, and canceled flows
+  - response shape for waiting and matched queue-entry flows
 - Framework tests in head should stay lightweight and focus on wiring and
   configuration only.
 - The most important head use-case tests should cover:
@@ -211,6 +208,8 @@ into dynamic service discovery.
   - matched poll response includes `match_id`, `lobby_id`, `ws_url`, and
     `region`
   - cancel matchmaking delegates correctly to matchmaking
+  - queue entry response preserves `ticket_id` and `region` when waiting
+  - queue entry response surfaces immediate matched outcomes cleanly
   - missing regional mapping falls back to the default game server
   - lobby creation failure prevents a successful matched response
 - Matchmaking-service tests should expand to cover:

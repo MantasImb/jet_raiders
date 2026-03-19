@@ -22,6 +22,8 @@ This layer contains the business logic for the head service.
 
 - `guest.rs` orchestrates guest init/login flows.
 - `guest.rs` defines the `AuthProvider` port and application-level errors.
+- `matchmaking.rs` orchestrates matchmaking queue entry.
+- `matchmaking.rs` defines the `MatchmakingProvider` port and application-level errors.
 
 ## Communication
 
