@@ -96,7 +96,11 @@ fn map_guest_session_error(error: &AuthProviderError) -> StatusCode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::use_cases::{AuthProvider, GuestInitResult, GuestLoginResult, GuestSessionService};
+    use crate::use_cases::{
+        AuthProvider, GuestInitResult, GuestLoginResult, GuestSessionService,
+        MatchmakingEnqueueResult, MatchmakingProvider, MatchmakingProviderError,
+        MatchmakingService,
+    };
     use async_trait::async_trait;
     use std::sync::Mutex;
 
@@ -129,11 +133,35 @@ mod tests {
                 .take()
                 .expect("login response should be configured")
         }
+
+        async fn verify_session(
+            &self,
+            _req: crate::use_cases::VerifySession,
+        ) -> Result<crate::use_cases::VerifySessionResult, AuthProviderError> {
+            panic!("verify session should not be called");
+        }
+    }
+
+    #[derive(Default)]
+    struct UnusedMatchmakingProvider;
+
+    #[async_trait]
+    impl MatchmakingProvider for UnusedMatchmakingProvider {
+        async fn enqueue(
+            &self,
+            _request: crate::use_cases::MatchmakingQueueRequest,
+        ) -> Result<MatchmakingEnqueueResult, MatchmakingProviderError> {
+            panic!("matchmaking should not be called");
+        }
     }
 
     fn app_state(auth: Arc<dyn AuthProvider>) -> Arc<AppState> {
         Arc::new(AppState {
             guest_sessions: Arc::new(GuestSessionService::new(auth)),
+            matchmaking: Arc::new(MatchmakingService::new(
+                Arc::new(MockAuthProvider::default()),
+                Arc::new(UnusedMatchmakingProvider),
+            )),
         })
     }
 

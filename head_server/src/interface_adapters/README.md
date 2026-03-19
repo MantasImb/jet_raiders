@@ -22,8 +22,9 @@ responses or other delivery formats.
 ## Current contents
 
 - `handlers/guest.rs` handles guest HTTP requests.
+- `handlers/matchmaking.rs` handles matchmaking queue-entry HTTP requests.
 - `routes.rs` wires HTTP routes to handlers.
-- `protocol.rs` defines HTTP request/response DTOs.
+- `protocol.rs` defines HTTP request/response DTOs for guest auth and matchmaking.
 - `state.rs` holds runtime dependencies for handlers.
 
 ## Communication

@@ -1,5 +1,6 @@
 use crate::use_cases::{
     AuthProvider, AuthProviderError, GuestInit, GuestInitResult, GuestLogin, GuestLoginResult,
+    VerifySession, VerifySessionResult,
 };
 use async_trait::async_trait;
 use reqwest::{Client, Response, StatusCode, Url};
@@ -47,6 +48,19 @@ struct AuthGuestLoginRequest {
 #[derive(Debug, Deserialize)]
 struct AuthGuestLoginResponse {
     token: String,
+    expires_at: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct AuthVerifyTokenRequest {
+    token: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct AuthVerifyTokenResponse {
+    user_id: u64,
+    display_name: String,
+    session_id: String,
     expires_at: u64,
 }
 
@@ -135,6 +149,35 @@ impl AuthProvider for AuthClient {
             expires_at: payload.expires_at,
         })
     }
+
+    async fn verify_session(
+        &self,
+        req: VerifySession,
+    ) -> Result<VerifySessionResult, AuthProviderError> {
+        let url = self.endpoint("auth/verify-token")?;
+        let response = self
+            .http
+            .post(url)
+            .json(&AuthVerifyTokenRequest {
+                token: req.session_token,
+            })
+            .send()
+            .await
+            .map_err(|_| AuthProviderError::UpstreamUnavailable)?;
+        let response = ensure_success_response(response).await?;
+
+        let payload = response
+            .json::<AuthVerifyTokenResponse>()
+            .await
+            .map_err(|_| AuthProviderError::Unexpected)?;
+
+        Ok(VerifySessionResult {
+            user_id: payload.user_id,
+            display_name: payload.display_name,
+            session_id: payload.session_id,
+            expires_at: payload.expires_at,
+        })
+    }
 }
 
 async fn ensure_success_response(response: Response) -> Result<Response, AuthProviderError> {
@@ -173,7 +216,7 @@ mod tests {
         paths: Arc<Mutex<Vec<String>>>,
     }
 
-    async fn capture_request_path(
+    async fn capture_guest_login_request_path(
         State(log): State<RequestLog>,
         request: axum::extract::Request,
     ) -> (AxumStatusCode, Json<serde_json::Value>) {
@@ -186,6 +229,26 @@ mod tests {
             AxumStatusCode::OK,
             Json(json!({
                 "token": "token",
+                "expires_at": 123
+            })),
+        )
+    }
+
+    async fn capture_verify_request_path(
+        State(log): State<RequestLog>,
+        request: axum::extract::Request,
+    ) -> (AxumStatusCode, Json<serde_json::Value>) {
+        log.paths
+            .lock()
+            .expect("lock should not be poisoned")
+            .push(request.uri().path().to_string());
+
+        (
+            AxumStatusCode::OK,
+            Json(json!({
+                "user_id": 42,
+                "display_name": "Pilot",
+                "session_id": "session-1",
                 "expires_at": 123
             })),
         )
@@ -241,7 +304,7 @@ mod tests {
     async fn create_guest_session_joins_against_base_path_prefix() {
         let log = RequestLog::default();
         let router = Router::new()
-            .route("/prefix/auth/guest", post(capture_request_path))
+            .route("/prefix/auth/guest", post(capture_guest_login_request_path))
             .with_state(log.clone());
         let base_url = spawn_test_server(router).await;
         let client = AuthClient::new(&format!("{base_url}/prefix")).expect("client should build");
@@ -267,6 +330,42 @@ mod tests {
                 .expect("lock should not be poisoned")
                 .as_slice(),
             &["/prefix/auth/guest".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn verify_session_joins_against_base_path_prefix() {
+        let log = RequestLog::default();
+        let router = Router::new()
+            .route(
+                "/prefix/auth/verify-token",
+                post(capture_verify_request_path),
+            )
+            .with_state(log.clone());
+        let base_url = spawn_test_server(router).await;
+        let client = AuthClient::new(&format!("{base_url}/prefix")).expect("client should build");
+
+        let result = client
+            .verify_session(VerifySession {
+                session_token: "token".into(),
+            })
+            .await;
+
+        assert_eq!(
+            result.expect("verify request should succeed"),
+            VerifySessionResult {
+                user_id: 42,
+                display_name: "Pilot".into(),
+                session_id: "session-1".into(),
+                expires_at: 123,
+            }
+        );
+        assert_eq!(
+            log.paths
+                .lock()
+                .expect("lock should not be poisoned")
+                .as_slice(),
+            &["/prefix/auth/verify-token".to_string()]
         );
     }
 

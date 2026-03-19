@@ -35,13 +35,14 @@ graph TD
 
 ## 3. Current State and Target State
 
-Status snapshot as of **March 17, 2026**:
+Status snapshot as of **March 19, 2026**:
 
 - `auth_server/`, `head_server/`, `game_server/`, and `matchmaking_server/`
   are runnable Rust services.
-- `head_server/` currently exposes guest identity/session HTTP APIs, routes
-  them through use-case orchestration, and calls `auth_server/` through an
-  injected auth port.
+- `head_server/` currently exposes guest identity/session HTTP APIs and
+  matchmaking queue-entry HTTP APIs, routes them through use-case
+  orchestration, and calls `auth_server/` and `matchmaking_server/` through
+  injected ports.
 - `website/` is still in scaffold/placeholder stage.
 - The active Godot project lives in `game_client/`.
 
@@ -105,10 +106,12 @@ game_server/
 ## 7. Multiplayer Session Flow
 
 1. Client authenticates through head service.
-2. Head service validates/obtains session via auth service.
-3. Head service requests assignment from matchmaking service.
-4. Client receives `lobby_id` and game server WebSocket endpoint.
-5. Client connects to game server and joins assigned lobby.
+2. Head service verifies the `session_token` through auth service and derives
+   the canonical player identity.
+3. Head service forwards that canonical identity to matchmaking service.
+4. Client receives either a waiting `ticket_id` or an immediate match result.
+5. Client connects to game server and joins the assigned lobby after later
+   phases complete handoff.
 6. Game server validates identity/session (directly or via auth-backed token
    verification).
 7. Client sends input; server runs simulation ticks and broadcasts snapshots.
@@ -119,13 +122,24 @@ Current implemented head-service entrypoints:
   `guest_id`, `session_token`, and `expires_at`.
 - `POST /guest/login`: creates/refreshes guest session through auth and returns
   `session_token` and `expires_at`.
+- `POST /matchmaking/queue`: verifies the submitted `session_token` through
+  auth, forwards the canonical player identity to matchmaking, and returns
+  `status`, `ticket_id`, and `region` for waiting responses or `status`,
+  `match_id`, `opponent_id`, and `region` for immediate matches.
 
 Current guest-flow layering inside `head_server/`:
 
 - `interface_adapters/handlers/guest.rs`: parses HTTP input and maps HTTP
   responses.
 - `use_cases/guest.rs`: owns guest init/login orchestration and the auth port.
+- `interface_adapters/handlers/matchmaking.rs`: verifies matchmaking
+  requests, maps queue responses, and forwards canonical identity to the
+  matchmaking use case.
+- `use_cases/matchmaking.rs`: owns matchmaking queue-entry orchestration and
+  the matchmaking port.
 - `frameworks/auth_client.rs`: implements the auth port with reqwest.
+- `frameworks/matchmaking_client.rs`: implements the matchmaking port with
+  reqwest.
 
 ## 8. Protocol and Tick Model (Planned Interface)
 

@@ -21,6 +21,7 @@ This is the outermost layer and depends on all inner layers.
 
 - `server.rs` builds state, routes, and starts the Axum server.
 - `auth_client.rs` implements the `AuthProvider` port with reqwest.
+- `matchmaking_client.rs` implements the `MatchmakingProvider` port with reqwest.
 
 ## Communication
 
