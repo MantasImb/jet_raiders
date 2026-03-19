@@ -1,6 +1,6 @@
 use crate::use_cases::{
     MatchmakingEnqueueResult, MatchmakingProvider, MatchmakingProviderError,
-    MatchmakingQueueRequest,
+    MatchmakingQueueRequest, MatchmakingTicketStatus,
 };
 use async_trait::async_trait;
 use reqwest::{Client, Response, StatusCode, Url};
@@ -35,8 +35,8 @@ struct MatchmakingQueueHttpRequest {
 }
 
 #[derive(Debug, Deserialize)]
-struct MatchmakingQueueResponse {
-    status: MatchmakingQueueStatus,
+struct MatchmakingHttpResponse {
+    status: MatchmakingHttpStatus,
     ticket_id: Option<String>,
     match_id: Option<String>,
     opponent_id: Option<String>,
@@ -45,7 +45,7 @@ struct MatchmakingQueueResponse {
 
 #[derive(Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-enum MatchmakingQueueStatus {
+enum MatchmakingHttpStatus {
     Waiting,
     Matched,
 }
@@ -99,18 +99,55 @@ impl MatchmakingProvider for MatchmakingClient {
         let response = ensure_success_response(response).await?;
 
         let payload = response
-            .json::<MatchmakingQueueResponse>()
+            .json::<MatchmakingHttpResponse>()
             .await
             .map_err(|_| MatchmakingProviderError::Unexpected)?;
 
         match payload.status {
-            MatchmakingQueueStatus::Waiting => Ok(MatchmakingEnqueueResult::Waiting {
+            MatchmakingHttpStatus::Waiting => Ok(MatchmakingEnqueueResult::Waiting {
                 ticket_id: payload
                     .ticket_id
                     .ok_or(MatchmakingProviderError::Unexpected)?,
                 region: payload.region,
             }),
-            MatchmakingQueueStatus::Matched => Ok(MatchmakingEnqueueResult::Matched {
+            MatchmakingHttpStatus::Matched => Ok(MatchmakingEnqueueResult::Matched {
+                match_id: payload
+                    .match_id
+                    .ok_or(MatchmakingProviderError::Unexpected)?,
+                opponent_id: payload
+                    .opponent_id
+                    .ok_or(MatchmakingProviderError::Unexpected)?,
+                region: payload.region,
+            }),
+        }
+    }
+
+    async fn poll_status(
+        &self,
+        ticket_id: String,
+    ) -> Result<MatchmakingTicketStatus, MatchmakingProviderError> {
+        let url = self.endpoint(&format!("matchmaking/queue/{ticket_id}"))?;
+        let response = self
+            .http
+            .get(url)
+            .send()
+            .await
+            .map_err(|_| MatchmakingProviderError::UpstreamUnavailable)?;
+        let response = ensure_success_response(response).await?;
+
+        let payload = response
+            .json::<MatchmakingHttpResponse>()
+            .await
+            .map_err(|_| MatchmakingProviderError::Unexpected)?;
+
+        match payload.status {
+            MatchmakingHttpStatus::Waiting => Ok(MatchmakingTicketStatus::Waiting {
+                ticket_id: payload
+                    .ticket_id
+                    .ok_or(MatchmakingProviderError::Unexpected)?,
+                region: payload.region,
+            }),
+            MatchmakingHttpStatus::Matched => Ok(MatchmakingTicketStatus::Matched {
                 match_id: payload
                     .match_id
                     .ok_or(MatchmakingProviderError::Unexpected)?,
@@ -138,6 +175,7 @@ fn map_status_to_error(status: StatusCode) -> MatchmakingProviderError {
     match status {
         StatusCode::BAD_REQUEST => MatchmakingProviderError::BadRequest,
         StatusCode::CONFLICT => MatchmakingProviderError::Conflict,
+        StatusCode::NOT_FOUND => MatchmakingProviderError::NotFound,
         _ if status.is_client_error() => MatchmakingProviderError::UnexpectedClientError,
         _ => MatchmakingProviderError::UpstreamUnavailable,
     }
@@ -146,7 +184,12 @@ fn map_status_to_error(status: StatusCode) -> MatchmakingProviderError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::{Json, Router, extract::State, http::StatusCode as AxumStatusCode, routing::post};
+    use axum::{
+        Json, Router,
+        extract::State,
+        http::StatusCode as AxumStatusCode,
+        routing::{get, post},
+    };
     use serde_json::json;
     use std::sync::{Arc, Mutex};
     use tokio::net::TcpListener;
@@ -258,11 +301,53 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn poll_status_joins_against_base_path_prefix() {
+        let log = RequestLog::default();
+        let router = Router::new()
+            .route(
+                "/prefix/matchmaking/queue/ticket-123",
+                get(capture_request_path),
+            )
+            .with_state(log.clone());
+        let base_url = spawn_test_server(router).await;
+        let client =
+            MatchmakingClient::new(&format!("{base_url}/prefix")).expect("client should build");
+
+        let result = client
+            .poll_status("ticket-123".into())
+            .await
+            .expect("request should succeed");
+
+        assert_eq!(
+            result,
+            MatchmakingTicketStatus::Waiting {
+                ticket_id: "ticket-123".into(),
+                region: "eu-west".into(),
+            }
+        );
+        assert_eq!(
+            log.paths
+                .lock()
+                .expect("lock should not be poisoned")
+                .as_slice(),
+            &["/prefix/matchmaking/queue/ticket-123".to_string()]
+        );
+    }
+
     #[test]
     fn conflict_maps_to_matchmaking_conflict_error() {
         assert_eq!(
             map_status_to_error(StatusCode::CONFLICT),
             MatchmakingProviderError::Conflict
+        );
+    }
+
+    #[test]
+    fn not_found_maps_to_matchmaking_not_found_error() {
+        assert_eq!(
+            map_status_to_error(StatusCode::NOT_FOUND),
+            MatchmakingProviderError::NotFound
         );
     }
 }

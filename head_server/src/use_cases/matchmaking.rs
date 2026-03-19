@@ -25,9 +25,23 @@ pub enum MatchmakingEnqueueResult {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MatchmakingTicketStatus {
+    Waiting {
+        ticket_id: String,
+        region: String,
+    },
+    Matched {
+        match_id: String,
+        opponent_id: String,
+        region: String,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MatchmakingProviderError {
     BadRequest,
     Conflict,
+    NotFound,
     UnexpectedClientError,
     UpstreamUnavailable,
     Unexpected,
@@ -38,6 +52,7 @@ impl fmt::Display for MatchmakingProviderError {
         match self {
             MatchmakingProviderError::BadRequest => write!(f, "bad request"),
             MatchmakingProviderError::Conflict => write!(f, "conflict"),
+            MatchmakingProviderError::NotFound => write!(f, "not found"),
             MatchmakingProviderError::UnexpectedClientError => {
                 write!(f, "unexpected upstream client error")
             }
@@ -63,6 +78,20 @@ pub enum EnterMatchmakingError {
     Unexpected,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PollMatchmaking {
+    pub ticket_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PollMatchmakingError {
+    BadRequest,
+    NotFound,
+    UnexpectedClientError,
+    UpstreamUnavailable,
+    Unexpected,
+}
+
 impl fmt::Display for EnterMatchmakingError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -81,6 +110,22 @@ impl fmt::Display for EnterMatchmakingError {
 }
 
 impl std::error::Error for EnterMatchmakingError {}
+
+impl fmt::Display for PollMatchmakingError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PollMatchmakingError::BadRequest => write!(f, "bad request"),
+            PollMatchmakingError::NotFound => write!(f, "not found"),
+            PollMatchmakingError::UnexpectedClientError => {
+                write!(f, "unexpected upstream client error")
+            }
+            PollMatchmakingError::UpstreamUnavailable => write!(f, "upstream unavailable"),
+            PollMatchmakingError::Unexpected => write!(f, "unexpected poll matchmaking error"),
+        }
+    }
+}
+
+impl std::error::Error for PollMatchmakingError {}
 
 impl From<AuthProviderError> for EnterMatchmakingError {
     fn from(error: AuthProviderError) -> Self {
@@ -104,6 +149,7 @@ impl From<MatchmakingProviderError> for EnterMatchmakingError {
         match error {
             MatchmakingProviderError::BadRequest => EnterMatchmakingError::BadRequest,
             MatchmakingProviderError::Conflict => EnterMatchmakingError::Conflict,
+            MatchmakingProviderError::NotFound => EnterMatchmakingError::Unexpected,
             MatchmakingProviderError::UnexpectedClientError => {
                 EnterMatchmakingError::UnexpectedClientError
             }
@@ -115,12 +161,34 @@ impl From<MatchmakingProviderError> for EnterMatchmakingError {
     }
 }
 
+impl From<MatchmakingProviderError> for PollMatchmakingError {
+    fn from(error: MatchmakingProviderError) -> Self {
+        match error {
+            MatchmakingProviderError::BadRequest => PollMatchmakingError::BadRequest,
+            MatchmakingProviderError::Conflict => PollMatchmakingError::Unexpected,
+            MatchmakingProviderError::NotFound => PollMatchmakingError::NotFound,
+            MatchmakingProviderError::UnexpectedClientError => {
+                PollMatchmakingError::UnexpectedClientError
+            }
+            MatchmakingProviderError::UpstreamUnavailable => {
+                PollMatchmakingError::UpstreamUnavailable
+            }
+            MatchmakingProviderError::Unexpected => PollMatchmakingError::Unexpected,
+        }
+    }
+}
+
 #[async_trait]
 pub trait MatchmakingProvider: Send + Sync {
     async fn enqueue(
         &self,
         request: MatchmakingQueueRequest,
     ) -> Result<MatchmakingEnqueueResult, MatchmakingProviderError>;
+
+    async fn poll_status(
+        &self,
+        ticket_id: String,
+    ) -> Result<MatchmakingTicketStatus, MatchmakingProviderError>;
 }
 
 #[derive(Clone)]
@@ -154,6 +222,16 @@ impl MatchmakingService {
             ))
             .await
             .map_err(EnterMatchmakingError::from)
+    }
+
+    pub async fn poll_status(
+        &self,
+        request: PollMatchmaking,
+    ) -> Result<MatchmakingTicketStatus, PollMatchmakingError> {
+        self.matchmaking
+            .poll_status(request.ticket_id)
+            .await
+            .map_err(PollMatchmakingError::from)
     }
 }
 
@@ -221,6 +299,8 @@ mod tests {
     struct MockMatchmakingProvider {
         enqueue_requests: Mutex<Vec<MatchmakingQueueRequest>>,
         enqueue_response: Mutex<Option<Result<MatchmakingEnqueueResult, MatchmakingProviderError>>>,
+        poll_requests: Mutex<Vec<String>>,
+        poll_response: Mutex<Option<Result<MatchmakingTicketStatus, MatchmakingProviderError>>>,
     }
 
     #[async_trait]
@@ -235,6 +315,18 @@ mod tests {
                 .unwrap()
                 .take()
                 .expect("enqueue response should be configured")
+        }
+
+        async fn poll_status(
+            &self,
+            ticket_id: String,
+        ) -> Result<MatchmakingTicketStatus, MatchmakingProviderError> {
+            self.poll_requests.lock().unwrap().push(ticket_id);
+            self.poll_response
+                .lock()
+                .unwrap()
+                .take()
+                .expect("poll response should be configured")
         }
     }
 
@@ -357,5 +449,54 @@ mod tests {
 
         assert_eq!(result, Err(EnterMatchmakingError::Unauthorized));
         assert!(matchmaking.enqueue_requests.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn poll_matchmaking_delegates_waiting_ticket_lookup_to_provider() {
+        let matchmaking = Arc::new(MockMatchmakingProvider {
+            poll_response: Mutex::new(Some(Ok(MatchmakingTicketStatus::Waiting {
+                ticket_id: "ticket-123".into(),
+                region: "eu-west".into(),
+            }))),
+            ..Default::default()
+        });
+        let service =
+            MatchmakingService::new(Arc::new(MockAuthProvider::default()), matchmaking.clone());
+
+        let result = service
+            .poll_status(PollMatchmaking {
+                ticket_id: "ticket-123".into(),
+            })
+            .await
+            .expect("poll should succeed");
+
+        assert_eq!(
+            result,
+            MatchmakingTicketStatus::Waiting {
+                ticket_id: "ticket-123".into(),
+                region: "eu-west".into(),
+            }
+        );
+        assert_eq!(
+            matchmaking.poll_requests.lock().unwrap().as_slice(),
+            &["ticket-123".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn poll_matchmaking_maps_not_found_from_provider() {
+        let matchmaking = Arc::new(MockMatchmakingProvider {
+            poll_response: Mutex::new(Some(Err(MatchmakingProviderError::NotFound))),
+            ..Default::default()
+        });
+        let service = MatchmakingService::new(Arc::new(MockAuthProvider::default()), matchmaking);
+
+        let result = service
+            .poll_status(PollMatchmaking {
+                ticket_id: "missing-ticket".into(),
+            })
+            .await;
+
+        assert_eq!(result, Err(PollMatchmakingError::NotFound));
     }
 }

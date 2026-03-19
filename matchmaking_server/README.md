@@ -13,7 +13,8 @@ Follow `CLEAN_ARCHITECTURE_GUIDELINES.md` for layering and dependency rules.
 
 - Accept matchmaking requests from clients via the head service.
 - Group players based on simple queue rules (region-only today).
-- Return an immediate response indicating whether a match was found.
+- Return either an immediate queue result or the current status of an issued
+  ticket.
 
 ## Queue Flow (Player -> Match -> Head Service)
 
@@ -36,9 +37,14 @@ leaving room for additional matchmaking rules later.
     - The player is stored in the in-memory queue.
     - A `ticket_id` is issued so the head service can track the request.
     - The service responds with `status: waiting`.
-6. **Head service response**: The head service receives the response and either
-   notifies the client immediately (matched) or waits to re-attempt once the
-   queued entry is cleared (a duplicate request returns a conflict error).
+6. **Polling**:
+    - The head service can later call `GET /matchmaking/queue/{ticket_id}`.
+    - A queued ticket returns `status: waiting` plus the same `ticket_id`.
+    - A matched waiting ticket returns `status: matched` plus the match data
+      created when the opponent arrived.
+7. **Head service response**: The head service receives the response and either
+   notifies the client immediately (matched) or keeps the client polling until
+   later orchestration phases complete the final handoff.
 
 ## External Interfaces
 
@@ -47,6 +53,9 @@ leaving room for additional matchmaking rules later.
 - `POST /matchmaking/queue`
   - Enqueues a player for matchmaking.
   - Returns a queue ticket or match assignment.
+- `GET /matchmaking/queue/{ticket_id}`
+  - Looks up the current status of an issued queue ticket.
+  - Returns the waiting or matched state for that ticket.
 
 ## Data Contracts
 
@@ -63,6 +72,10 @@ leaving room for additional matchmaking rules later.
 - `match_id`: match identifier when matched.
 - `opponent_id`: opponent player identifier when matched.
 - `region`: the region used for matchmaking.
+
+### Ticket Lookup Errors
+
+- Unknown `ticket_id` values return `404`.
 
 ## Security Considerations
 

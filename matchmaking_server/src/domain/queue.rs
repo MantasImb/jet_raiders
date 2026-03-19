@@ -3,6 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 // A player waiting to be matched.
 #[derive(Debug, Clone)]
 pub struct WaitingPlayer {
+    pub ticket_id: String,
     pub player_id: String,
     pub player_skill: u32,
     pub region: String,
@@ -11,8 +12,9 @@ pub struct WaitingPlayer {
 
 impl WaitingPlayer {
     // Create a new waiting player record with a timestamp.
-    pub fn new(player_id: String, player_skill: u32, region: String) -> Self {
+    pub fn new(ticket_id: String, player_id: String, player_skill: u32, region: String) -> Self {
         Self {
+            ticket_id,
             player_id,
             player_skill,
             region,
