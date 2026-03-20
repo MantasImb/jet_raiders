@@ -1,6 +1,6 @@
 use crate::interface_adapters::protocol::{
     HeadEnterMatchmakingRequest, HeadMatchmakingResponse, HeadMatchmakingStatus,
-    HeadPollMatchmakingResponse,
+    HeadPollMatchmakingQuery, HeadPollMatchmakingResponse,
 };
 use crate::interface_adapters::state::AppState;
 use crate::use_cases::{
@@ -9,7 +9,7 @@ use crate::use_cases::{
 };
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
 };
 use std::sync::Arc;
@@ -27,14 +27,12 @@ pub async fn enter_matchmaking(
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    // Convert the HTTP request into an application command.
     let request = EnterMatchmaking {
         session_token: body.session_token,
         player_skill: body.player_skill,
         region: body.region,
     };
 
-    // Delegate queue orchestration to the use-case layer.
     let result = state
         .matchmaking
         .enter_queue(request)
@@ -72,14 +70,18 @@ pub async fn enter_matchmaking(
 pub async fn poll_matchmaking(
     State(state): State<Arc<AppState>>,
     Path(ticket_id): Path<String>,
+    Query(query): Query<HeadPollMatchmakingQuery>,
 ) -> Result<Json<HeadPollMatchmakingResponse>, StatusCode> {
-    if ticket_id.trim().is_empty() {
+    if ticket_id.trim().is_empty() || query.session_token.trim().is_empty() {
         return Err(StatusCode::BAD_REQUEST);
     }
 
     let result = state
         .matchmaking
-        .poll_status(PollMatchmaking { ticket_id })
+        .poll_status(PollMatchmaking {
+            session_token: query.session_token,
+            ticket_id,
+        })
         .await
         .map_err(|error| {
             tracing::error!(?error, "failed to poll matchmaking.");
@@ -123,6 +125,7 @@ fn map_matchmaking_error(error: &EnterMatchmakingError) -> StatusCode {
 
 fn map_poll_matchmaking_error(error: &PollMatchmakingError) -> StatusCode {
     match error {
+        PollMatchmakingError::Unauthorized => StatusCode::UNAUTHORIZED,
         PollMatchmakingError::BadRequest => StatusCode::BAD_REQUEST,
         PollMatchmakingError::NotFound => StatusCode::NOT_FOUND,
         PollMatchmakingError::UnexpectedClientError
@@ -390,7 +393,14 @@ mod tests {
     #[tokio::test]
     async fn poll_matchmaking_returns_waiting_response() {
         let state = app_state(
-            Arc::new(MockAuthProvider::default()),
+            Arc::new(MockAuthProvider {
+                verify_response: Mutex::new(Some(Ok(VerifySessionResult {
+                    user_id: 42,
+                    display_name: "Pilot".into(),
+                    session_id: "session-1".into(),
+                    expires_at: 123,
+                }))),
+            }),
             Arc::new(MockMatchmakingProvider {
                 poll_response: Mutex::new(Some(Ok(MatchmakingTicketStatus::Waiting {
                     ticket_id: "ticket-123".into(),
@@ -399,9 +409,15 @@ mod tests {
                 ..Default::default()
             }),
         );
-        let result = poll_matchmaking(State(state), Path("ticket-123".to_string()))
-            .await
-            .expect("poll should succeed");
+        let result = poll_matchmaking(
+            State(state),
+            Path("ticket-123".to_string()),
+            Query(HeadPollMatchmakingQuery {
+                session_token: "token-123".into(),
+            }),
+        )
+        .await
+        .expect("poll should succeed");
 
         assert_eq!(result.0.status, HeadMatchmakingStatus::Waiting);
         assert_eq!(result.0.ticket_id.as_deref(), Some("ticket-123"));
@@ -413,7 +429,14 @@ mod tests {
     #[tokio::test]
     async fn poll_matchmaking_returns_matched_response() {
         let state = app_state(
-            Arc::new(MockAuthProvider::default()),
+            Arc::new(MockAuthProvider {
+                verify_response: Mutex::new(Some(Ok(VerifySessionResult {
+                    user_id: 42,
+                    display_name: "Pilot".into(),
+                    session_id: "session-1".into(),
+                    expires_at: 123,
+                }))),
+            }),
             Arc::new(MockMatchmakingProvider {
                 poll_response: Mutex::new(Some(Ok(MatchmakingTicketStatus::Matched {
                     match_id: "match-123".into(),
@@ -423,9 +446,15 @@ mod tests {
                 ..Default::default()
             }),
         );
-        let result = poll_matchmaking(State(state), Path("ticket-123".to_string()))
-            .await
-            .expect("poll should succeed");
+        let result = poll_matchmaking(
+            State(state),
+            Path("ticket-123".to_string()),
+            Query(HeadPollMatchmakingQuery {
+                session_token: "token-123".into(),
+            }),
+        )
+        .await
+        .expect("poll should succeed");
 
         assert_eq!(result.0.status, HeadMatchmakingStatus::Matched);
         assert_eq!(result.0.ticket_id, None);
@@ -438,34 +467,64 @@ mod tests {
     async fn poll_matchmaking_maps_errors_to_http_status_codes() {
         let cases = [
             (
-                MatchmakingProviderError::BadRequest,
+                Err(crate::use_cases::AuthProviderError::Unauthorized),
+                StatusCode::UNAUTHORIZED,
+            ),
+            (
+                Ok(MatchmakingProviderError::BadRequest),
                 StatusCode::BAD_REQUEST,
             ),
-            (MatchmakingProviderError::NotFound, StatusCode::NOT_FOUND),
             (
-                MatchmakingProviderError::UnexpectedClientError,
+                Ok(MatchmakingProviderError::NotFound),
+                StatusCode::NOT_FOUND,
+            ),
+            (
+                Ok(MatchmakingProviderError::UnexpectedClientError),
                 StatusCode::BAD_GATEWAY,
             ),
             (
-                MatchmakingProviderError::UpstreamUnavailable,
+                Ok(MatchmakingProviderError::UpstreamUnavailable),
                 StatusCode::BAD_GATEWAY,
             ),
             (
-                MatchmakingProviderError::Unexpected,
+                Ok(MatchmakingProviderError::Unexpected),
                 StatusCode::BAD_GATEWAY,
             ),
         ];
 
-        for (provider_error, expected_status) in cases {
-            let state = app_state(
-                Arc::new(MockAuthProvider::default()),
-                Arc::new(MockMatchmakingProvider {
-                    poll_response: Mutex::new(Some(Err(provider_error))),
-                    ..Default::default()
-                }),
-            );
+        for (error_source, expected_status) in cases {
+            let (auth, matchmaking) = match error_source {
+                Err(auth_error) => (
+                    Arc::new(MockAuthProvider {
+                        verify_response: Mutex::new(Some(Err(auth_error))),
+                    }) as Arc<dyn AuthProvider>,
+                    Arc::new(MockMatchmakingProvider::default()) as Arc<dyn MatchmakingProvider>,
+                ),
+                Ok(matchmaking_error) => (
+                    Arc::new(MockAuthProvider {
+                        verify_response: Mutex::new(Some(Ok(VerifySessionResult {
+                            user_id: 42,
+                            display_name: "Pilot".into(),
+                            session_id: "session-1".into(),
+                            expires_at: 123,
+                        }))),
+                    }) as Arc<dyn AuthProvider>,
+                    Arc::new(MockMatchmakingProvider {
+                        poll_response: Mutex::new(Some(Err(matchmaking_error))),
+                        ..Default::default()
+                    }) as Arc<dyn MatchmakingProvider>,
+                ),
+            };
+            let state = app_state(auth, matchmaking);
 
-            let result = poll_matchmaking(State(state), Path("ticket-123".to_string())).await;
+            let result = poll_matchmaking(
+                State(state),
+                Path("ticket-123".to_string()),
+                Query(HeadPollMatchmakingQuery {
+                    session_token: "token-123".into(),
+                }),
+            )
+            .await;
 
             match result {
                 Ok(_) => panic!("provider errors should fail"),

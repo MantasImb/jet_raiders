@@ -148,9 +148,12 @@ mod tests {
             panic!("first player should be queued");
         };
 
-        let result = lookup_ticket(State(app_state(matchmaker)), Path(ticket_id))
-            .await
-            .expect("lookup should succeed");
+        let result = lookup_ticket(
+            State(app_state(matchmaker)),
+            Path(ticket_id),
+        )
+        .await
+        .expect("lookup should succeed");
 
         assert!(matches!(result.0.status, QueueStatus::Waiting));
         assert!(
@@ -186,9 +189,12 @@ mod tests {
             })
             .expect("second enqueue should succeed");
 
-        let result = lookup_ticket(State(app_state(matchmaker)), Path(ticket_id))
-            .await
-            .expect("lookup should succeed");
+        let result = lookup_ticket(
+            State(app_state(matchmaker)),
+            Path(ticket_id),
+        )
+        .await
+        .expect("lookup should succeed");
 
         assert!(matches!(result.0.status, QueueStatus::Matched));
         assert_eq!(result.0.ticket_id, None);

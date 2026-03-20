@@ -42,6 +42,12 @@ pub struct HeadEnterMatchmakingRequest {
     pub region: String,
 }
 
+#[derive(Deserialize)]
+pub struct HeadPollMatchmakingQuery {
+    // Auth session token used to verify the ticket owner before polling.
+    pub session_token: String,
+}
+
 #[derive(Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum HeadMatchmakingStatus {

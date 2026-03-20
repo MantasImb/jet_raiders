@@ -146,7 +146,10 @@ impl Matchmaker {
     }
 
     // Look up the current status of a previously issued ticket.
-    pub fn lookup_ticket(&self, ticket_id: &str) -> Result<TicketStatus, TicketLookupError> {
+    pub fn lookup_ticket(
+        &self,
+        ticket_id: &str,
+    ) -> Result<TicketStatus, TicketLookupError> {
         if let Some(waiting_player) = self.waiting_tickets_by_id.get(ticket_id) {
             return Ok(TicketStatus::Waiting {
                 ticket_id: waiting_player.ticket_id.clone(),

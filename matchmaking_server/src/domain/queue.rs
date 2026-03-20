@@ -2,6 +2,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
 // A player waiting to be matched.
+// Some fields are reserved for later matchmaking phases and are not consumed
+// by the current queue logic yet.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct WaitingPlayer {
     pub ticket_id: String,

@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use std::fmt;
 use std::sync::Arc;
 
-use crate::use_cases::{AuthProvider, AuthProviderError, VerifySession};
+use crate::use_cases::{AuthProvider, AuthProviderError, VerifySession, VerifySessionResult};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EnterMatchmaking {
@@ -80,11 +80,13 @@ pub enum EnterMatchmakingError {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PollMatchmaking {
+    pub session_token: String,
     pub ticket_id: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PollMatchmakingError {
+    Unauthorized,
     BadRequest,
     NotFound,
     UnexpectedClientError,
@@ -114,6 +116,7 @@ impl std::error::Error for EnterMatchmakingError {}
 impl fmt::Display for PollMatchmakingError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            PollMatchmakingError::Unauthorized => write!(f, "unauthorized"),
             PollMatchmakingError::BadRequest => write!(f, "bad request"),
             PollMatchmakingError::NotFound => write!(f, "not found"),
             PollMatchmakingError::UnexpectedClientError => {
@@ -161,6 +164,21 @@ impl From<MatchmakingProviderError> for EnterMatchmakingError {
     }
 }
 
+impl From<AuthProviderError> for PollMatchmakingError {
+    fn from(error: AuthProviderError) -> Self {
+        match error {
+            AuthProviderError::Unauthorized => PollMatchmakingError::Unauthorized,
+            AuthProviderError::BadRequest => PollMatchmakingError::BadRequest,
+            AuthProviderError::UnexpectedClientError => PollMatchmakingError::UnexpectedClientError,
+            AuthProviderError::UpstreamUnavailable => PollMatchmakingError::UpstreamUnavailable,
+            AuthProviderError::Unexpected
+            | AuthProviderError::NotFound
+            | AuthProviderError::Forbidden
+            | AuthProviderError::UnprocessableEntity => PollMatchmakingError::Unexpected,
+        }
+    }
+}
+
 impl From<MatchmakingProviderError> for PollMatchmakingError {
     fn from(error: MatchmakingProviderError) -> Self {
         match error {
@@ -202,15 +220,23 @@ impl MatchmakingService {
         Self { auth, matchmaking }
     }
 
+    // Keep session verification in one place so queue entry and polling apply
+    // the same auth boundary before delegating to matchmaking.
+    async fn verify_caller_session(
+        &self,
+        session_token: String,
+    ) -> Result<VerifySessionResult, AuthProviderError> {
+        self.auth
+            .verify_session(VerifySession { session_token })
+            .await
+    }
+
     pub async fn enter_queue(
         &self,
         request: EnterMatchmaking,
     ) -> Result<MatchmakingEnqueueResult, EnterMatchmakingError> {
         let session = self
-            .auth
-            .verify_session(VerifySession {
-                session_token: request.session_token,
-            })
+            .verify_caller_session(request.session_token)
             .await
             .map_err(EnterMatchmakingError::from)?;
 
@@ -228,6 +254,10 @@ impl MatchmakingService {
         &self,
         request: PollMatchmaking,
     ) -> Result<MatchmakingTicketStatus, PollMatchmakingError> {
+        self.verify_caller_session(request.session_token)
+            .await
+            .map_err(PollMatchmakingError::from)?;
+
         self.matchmaking
             .poll_status(request.ticket_id)
             .await
@@ -453,6 +483,15 @@ mod tests {
 
     #[tokio::test]
     async fn poll_matchmaking_delegates_waiting_ticket_lookup_to_provider() {
+        let auth = Arc::new(MockAuthProvider {
+            verify_response: Mutex::new(Some(Ok(VerifySessionResult {
+                user_id: 42,
+                display_name: "Pilot".into(),
+                session_id: "session-1".into(),
+                expires_at: 123,
+            }))),
+            ..Default::default()
+        });
         let matchmaking = Arc::new(MockMatchmakingProvider {
             poll_response: Mutex::new(Some(Ok(MatchmakingTicketStatus::Waiting {
                 ticket_id: "ticket-123".into(),
@@ -460,11 +499,11 @@ mod tests {
             }))),
             ..Default::default()
         });
-        let service =
-            MatchmakingService::new(Arc::new(MockAuthProvider::default()), matchmaking.clone());
+        let service = MatchmakingService::new(auth.clone(), matchmaking.clone());
 
         let result = service
             .poll_status(PollMatchmaking {
+                session_token: "token-123".into(),
                 ticket_id: "ticket-123".into(),
             })
             .await
@@ -481,22 +520,58 @@ mod tests {
             matchmaking.poll_requests.lock().unwrap().as_slice(),
             &["ticket-123".to_string()]
         );
+        assert_eq!(
+            auth.verify_requests.lock().unwrap().as_slice(),
+            &[VerifySession {
+                session_token: "token-123".into(),
+            }]
+        );
     }
 
     #[tokio::test]
     async fn poll_matchmaking_maps_not_found_from_provider() {
+        let auth = Arc::new(MockAuthProvider {
+            verify_response: Mutex::new(Some(Ok(VerifySessionResult {
+                user_id: 42,
+                display_name: "Pilot".into(),
+                session_id: "session-1".into(),
+                expires_at: 123,
+            }))),
+            ..Default::default()
+        });
         let matchmaking = Arc::new(MockMatchmakingProvider {
             poll_response: Mutex::new(Some(Err(MatchmakingProviderError::NotFound))),
             ..Default::default()
         });
-        let service = MatchmakingService::new(Arc::new(MockAuthProvider::default()), matchmaking);
+        let service = MatchmakingService::new(auth, matchmaking);
 
         let result = service
             .poll_status(PollMatchmaking {
+                session_token: "token-123".into(),
                 ticket_id: "missing-ticket".into(),
             })
             .await;
 
         assert_eq!(result, Err(PollMatchmakingError::NotFound));
+    }
+
+    #[tokio::test]
+    async fn poll_matchmaking_returns_unauthorized_when_session_token_is_invalid() {
+        let auth = Arc::new(MockAuthProvider {
+            verify_response: Mutex::new(Some(Err(AuthProviderError::Unauthorized))),
+            ..Default::default()
+        });
+        let matchmaking = Arc::new(MockMatchmakingProvider::default());
+        let service = MatchmakingService::new(auth, matchmaking.clone());
+
+        let result = service
+            .poll_status(PollMatchmaking {
+                session_token: "bad-token".into(),
+                ticket_id: "ticket-123".into(),
+            })
+            .await;
+
+        assert_eq!(result, Err(PollMatchmakingError::Unauthorized));
+        assert!(matchmaking.poll_requests.lock().unwrap().is_empty());
     }
 }
