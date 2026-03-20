@@ -109,6 +109,10 @@ impl Matchmaker {
                     region: request.region.clone(),
                 },
             );
+            // TODO: completed_matches_by_ticket currently grows monotonically.
+            // Add a retention policy such as TTL eviction, size-bounded
+            // pruning, or removal after the completed ticket has been polled
+            // and acknowledged.
 
             return Ok(MatchOutcome::Matched {
                 match_id,
