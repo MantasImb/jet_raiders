@@ -61,6 +61,7 @@ struct CompletedMatch {
 pub struct Matchmaker {
     queue: VecDeque<WaitingPlayer>,
     active_tickets_by_player: HashMap<String, String>,
+    waiting_tickets_by_id: HashMap<String, WaitingPlayer>,
     completed_matches_by_ticket: HashMap<String, CompletedMatch>,
 }
 
@@ -70,6 +71,7 @@ impl Matchmaker {
         Self {
             queue: VecDeque::new(),
             active_tickets_by_player: HashMap::new(),
+            waiting_tickets_by_id: HashMap::new(),
             completed_matches_by_ticket: HashMap::new(),
         }
     }
@@ -99,6 +101,8 @@ impl Matchmaker {
             self.queue.remove(index);
             self.active_tickets_by_player
                 .remove(opponent.player_id.as_str());
+            self.waiting_tickets_by_id
+                .remove(opponent.ticket_id.as_str());
 
             let match_id = build_match_id(&request.player_id, &opponent.player_id);
             self.completed_matches_by_ticket.insert(
@@ -129,9 +133,11 @@ impl Matchmaker {
             request.region.clone(),
         );
 
-        self.queue.push_back(waiting_player);
+        self.queue.push_back(waiting_player.clone());
         self.active_tickets_by_player
             .insert(request.player_id, ticket_id.clone());
+        self.waiting_tickets_by_id
+            .insert(ticket_id.clone(), waiting_player);
 
         Ok(MatchOutcome::Waiting {
             ticket_id,
@@ -141,11 +147,7 @@ impl Matchmaker {
 
     // Look up the current status of a previously issued ticket.
     pub fn lookup_ticket(&self, ticket_id: &str) -> Result<TicketStatus, TicketLookupError> {
-        if let Some(waiting_player) = self
-            .queue
-            .iter()
-            .find(|player| player.ticket_id == ticket_id)
-        {
+        if let Some(waiting_player) = self.waiting_tickets_by_id.get(ticket_id) {
             return Ok(TicketStatus::Waiting {
                 ticket_id: waiting_player.ticket_id.clone(),
                 region: waiting_player.region.clone(),
@@ -197,6 +199,21 @@ mod tests {
                 region: "eu-west".into(),
             })
         );
+    }
+
+    #[test]
+    fn duplicate_enqueue_returns_already_queued_error() {
+        let mut matchmaker = Matchmaker::new();
+        matchmaker
+            .enqueue(queue_request("player-1", "eu-west"))
+            .expect("first enqueue should succeed");
+
+        let result = matchmaker.enqueue(queue_request("player-1", "us-east"));
+
+        assert!(matches!(
+            result,
+            Err(MatchError::AlreadyQueued { player_id }) if player_id == "player-1"
+        ));
     }
 
     #[test]
