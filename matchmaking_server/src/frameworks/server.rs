@@ -1,3 +1,4 @@
+use crate::frameworks::id_generator::SystemMatchIdGenerator;
 use crate::interface_adapters::routes;
 use crate::interface_adapters::state::AppState;
 use crate::use_cases::matchmaker::Matchmaker;
@@ -38,7 +39,9 @@ pub async fn run() {
 
     // Initialize the in-memory matchmaking queue.
     let state = Arc::new(AppState {
-        matchmaker: Arc::new(Mutex::new(Matchmaker::new())),
+        matchmaker: Arc::new(Mutex::new(Matchmaker::new(Arc::new(
+            SystemMatchIdGenerator,
+        )))),
     });
 
     // Wire the HTTP routes for the matchmaking API.

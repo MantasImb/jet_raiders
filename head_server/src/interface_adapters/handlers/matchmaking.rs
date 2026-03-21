@@ -1,6 +1,5 @@
 use crate::interface_adapters::protocol::{
     HeadEnterMatchmakingRequest, HeadMatchmakingResponse, HeadMatchmakingStatus,
-    HeadPollMatchmakingQuery,
 };
 use crate::interface_adapters::state::AppState;
 use crate::use_cases::{
@@ -9,8 +8,8 @@ use crate::use_cases::{
 };
 use axum::{
     Json,
-    extract::{Path, Query, State},
-    http::StatusCode,
+    extract::{Path, State},
+    http::{HeaderMap, StatusCode, header::AUTHORIZATION},
 };
 use std::sync::Arc;
 
@@ -49,16 +48,17 @@ pub async fn enter_matchmaking(
 pub async fn poll_matchmaking(
     State(state): State<Arc<AppState>>,
     Path(ticket_id): Path<String>,
-    Query(query): Query<HeadPollMatchmakingQuery>,
+    headers: HeaderMap,
 ) -> Result<Json<HeadMatchmakingResponse>, StatusCode> {
-    if ticket_id.trim().is_empty() || query.session_token.trim().is_empty() {
+    let session_token = extract_bearer_token(&headers)?;
+    if ticket_id.trim().is_empty() {
         return Err(StatusCode::BAD_REQUEST);
     }
 
     let result = state
         .matchmaking
         .poll_status(PollMatchmaking {
-            session_token: query.session_token,
+            session_token,
             ticket_id,
         })
         .await
@@ -74,16 +74,17 @@ pub async fn poll_matchmaking(
 pub async fn cancel_matchmaking(
     State(state): State<Arc<AppState>>,
     Path(ticket_id): Path<String>,
-    Query(query): Query<HeadPollMatchmakingQuery>,
+    headers: HeaderMap,
 ) -> Result<Json<HeadMatchmakingResponse>, StatusCode> {
-    if ticket_id.trim().is_empty() || query.session_token.trim().is_empty() {
+    let session_token = extract_bearer_token(&headers)?;
+    if ticket_id.trim().is_empty() {
         return Err(StatusCode::BAD_REQUEST);
     }
 
     let result = state
         .matchmaking
         .cancel(CancelMatchmaking {
-            session_token: query.session_token,
+            session_token,
             ticket_id,
         })
         .await
@@ -127,6 +128,25 @@ fn map_head_result(result: HeadMatchmakingResult) -> HeadMatchmakingResponse {
             region,
         },
     }
+}
+
+fn extract_bearer_token(headers: &HeaderMap) -> Result<String, StatusCode> {
+    let raw_value = headers
+        .get(AUTHORIZATION)
+        .ok_or(StatusCode::BAD_REQUEST)?
+        .to_str()
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    let token = raw_value
+        .strip_prefix("Bearer ")
+        .ok_or(StatusCode::BAD_REQUEST)?
+        .trim();
+
+    if token.is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    Ok(token.to_string())
 }
 
 fn map_matchmaking_error(error: &EnterMatchmakingError) -> StatusCode {
@@ -173,6 +193,7 @@ mod tests {
         VerifySessionResult,
     };
     use async_trait::async_trait;
+    use axum::http::{HeaderMap, HeaderValue, header::AUTHORIZATION};
     use std::sync::{Arc, Mutex};
 
     #[derive(Default)]
@@ -232,6 +253,7 @@ mod tests {
 
         async fn poll_status(
             &self,
+            _player_id: u64,
             _ticket_id: String,
         ) -> Result<MatchmakingLifecycleState, MatchmakingProviderError> {
             self.poll_response
@@ -243,6 +265,7 @@ mod tests {
 
         async fn cancel(
             &self,
+            _player_id: u64,
             _ticket_id: String,
         ) -> Result<MatchmakingLifecycleState, MatchmakingProviderError> {
             self.cancel_response
@@ -329,6 +352,16 @@ mod tests {
         Arc::new(MockGameServerProvisioner {
             create_response: Mutex::new(Some(Ok(CreateGameLobbyResult::Created))),
         })
+    }
+
+    fn bearer_headers(session_token: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {session_token}"))
+                .expect("header should be valid"),
+        );
+        headers
     }
 
     #[tokio::test]
@@ -419,9 +452,7 @@ mod tests {
         let result = poll_matchmaking(
             State(state),
             Path("ticket-123".to_string()),
-            Query(HeadPollMatchmakingQuery {
-                session_token: "token-123".into(),
-            }),
+            bearer_headers("token-123"),
         )
         .await
         .expect("poll should succeed");
@@ -431,6 +462,7 @@ mod tests {
         assert_eq!(result.0.match_id, None);
         assert_eq!(result.0.lobby_id, None);
         assert_eq!(result.0.ws_url, None);
+        assert_eq!(result.0.region, "eu-west");
     }
 
     #[tokio::test]
@@ -451,15 +483,14 @@ mod tests {
         let result = cancel_matchmaking(
             State(state),
             Path("ticket-123".to_string()),
-            Query(HeadPollMatchmakingQuery {
-                session_token: "token-123".into(),
-            }),
+            bearer_headers("token-123"),
         )
         .await
         .expect("cancel should succeed");
 
         assert_eq!(result.0.status, HeadMatchmakingStatus::Canceled);
         assert_eq!(result.0.ticket_id.as_deref(), Some("ticket-123"));
+        assert_eq!(result.0.region, "eu-west");
     }
 
     #[tokio::test]
@@ -477,9 +508,7 @@ mod tests {
         let result = cancel_matchmaking(
             State(state),
             Path("ticket-123".to_string()),
-            Query(HeadPollMatchmakingQuery {
-                session_token: "token-123".into(),
-            }),
+            bearer_headers("token-123"),
         )
         .await;
 

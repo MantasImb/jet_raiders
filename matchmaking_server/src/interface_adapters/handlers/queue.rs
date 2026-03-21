@@ -1,5 +1,5 @@
 use crate::interface_adapters::protocol::{
-    ErrorResponse, QueueRequest, QueueResponse, QueueStatus,
+    ErrorResponse, QueueRequest, QueueResponse, QueueStatus, TicketOwnerQuery,
 };
 use crate::interface_adapters::state::AppState;
 use crate::use_cases::matchmaker::{
@@ -7,7 +7,7 @@ use crate::use_cases::matchmaker::{
 };
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
 };
 use std::sync::Arc;
@@ -45,6 +45,7 @@ pub async fn enqueue(
 pub async fn lookup_ticket(
     State(state): State<Arc<AppState>>,
     Path(ticket_id): Path<String>,
+    Query(query): Query<TicketOwnerQuery>,
 ) -> Result<Json<QueueResponse>, (StatusCode, Json<ErrorResponse>)> {
     if ticket_id.trim().is_empty() {
         return Err((
@@ -57,11 +58,17 @@ pub async fn lookup_ticket(
 
     let outcome = {
         let matchmaker = state.matchmaker.lock().await;
-        matchmaker.lookup_ticket(ticket_id.as_str())
+        matchmaker.lookup_ticket(query.player_id, ticket_id.as_str())
     };
 
     match outcome {
         Ok(status) => Ok(Json(map_ticket_status(status))),
+        Err(TicketLookupError::Unauthorized { ticket_id }) => Err((
+            StatusCode::UNAUTHORIZED,
+            Json(ErrorResponse {
+                message: format!("ticket_id {ticket_id} is not owned by the caller"),
+            }),
+        )),
         Err(TicketLookupError::NotFound { ticket_id }) => Err((
             StatusCode::NOT_FOUND,
             Json(ErrorResponse {
@@ -75,6 +82,7 @@ pub async fn lookup_ticket(
 pub async fn cancel_ticket(
     State(state): State<Arc<AppState>>,
     Path(ticket_id): Path<String>,
+    Query(query): Query<TicketOwnerQuery>,
 ) -> Result<Json<QueueResponse>, (StatusCode, Json<ErrorResponse>)> {
     if ticket_id.trim().is_empty() {
         return Err((
@@ -87,11 +95,17 @@ pub async fn cancel_ticket(
 
     let outcome = {
         let mut matchmaker = state.matchmaker.lock().await;
-        matchmaker.cancel_ticket(ticket_id.as_str())
+        matchmaker.cancel_ticket(query.player_id, ticket_id.as_str())
     };
 
     match outcome {
         Ok(status) => Ok(Json(map_ticket_status(status))),
+        Err(CancelTicketError::Unauthorized { ticket_id }) => Err((
+            StatusCode::UNAUTHORIZED,
+            Json(ErrorResponse {
+                message: format!("ticket_id {ticket_id} is not owned by the caller"),
+            }),
+        )),
         Err(CancelTicketError::NotFound { ticket_id }) => Err((
             StatusCode::NOT_FOUND,
             Json(ErrorResponse {
@@ -141,9 +155,34 @@ fn map_ticket_status(status: TicketStatus) -> QueueResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::use_cases::matchmaker::Matchmaker;
-    use std::sync::Arc;
+    use crate::use_cases::matchmaker::{MatchIdGenerator, Matchmaker};
+    use std::sync::{Arc, Mutex as StdMutex};
     use tokio::sync::Mutex;
+
+    #[derive(Debug, Default)]
+    struct TestIdGenerator {
+        next_id: StdMutex<u64>,
+    }
+
+    impl MatchIdGenerator for TestIdGenerator {
+        fn next_ticket_id(&self, player_id: u64) -> String {
+            let mut next_id = self.next_id.lock().expect("lock should not be poisoned");
+            *next_id += 1;
+            format!("ticket-test-{}-{player_id}", *next_id)
+        }
+
+        fn next_match_id(&self, player_id: u64, opponent_id: u64) -> String {
+            let mut ids = [player_id, opponent_id];
+            ids.sort_unstable();
+            let mut next_id = self.next_id.lock().expect("lock should not be poisoned");
+            *next_id += 1;
+            format!("match-test-{}-{}-{}", *next_id, ids[0], ids[1])
+        }
+    }
+
+    fn matchmaker() -> Matchmaker {
+        Matchmaker::new(Arc::new(TestIdGenerator::default()))
+    }
 
     fn app_state(matchmaker: Matchmaker) -> Arc<AppState> {
         Arc::new(AppState {
@@ -154,7 +193,7 @@ mod tests {
     #[tokio::test]
     async fn enqueue_returns_waiting_response() {
         let result = enqueue(
-            State(app_state(Matchmaker::new())),
+            State(app_state(matchmaker())),
             Json(QueueRequest {
                 player_id: 1,
                 player_skill: 1200,
@@ -173,7 +212,7 @@ mod tests {
 
     #[tokio::test]
     async fn enqueue_returns_matched_response_with_shared_roster() {
-        let mut matchmaker = Matchmaker::new();
+        let mut matchmaker = matchmaker();
         let first_result = matchmaker.enqueue(EnqueuePlayer {
             player_id: 1,
             player_skill: 1200,
@@ -204,7 +243,7 @@ mod tests {
 
     #[tokio::test]
     async fn lookup_ticket_returns_canceled_response_for_canceled_ticket() {
-        let mut matchmaker = Matchmaker::new();
+        let mut matchmaker = matchmaker();
         let queued = matchmaker.enqueue(EnqueuePlayer {
             player_id: 1,
             player_skill: 1200,
@@ -215,12 +254,16 @@ mod tests {
             _ => panic!("first player should be queued"),
         };
         matchmaker
-            .cancel_ticket(ticket_id.as_str())
+            .cancel_ticket(1, ticket_id.as_str())
             .expect("cancel should succeed");
 
-        let result = lookup_ticket(State(app_state(matchmaker)), Path(ticket_id))
-            .await
-            .expect("lookup should succeed");
+        let result = lookup_ticket(
+            State(app_state(matchmaker)),
+            Path(ticket_id),
+            Query(TicketOwnerQuery { player_id: 1 }),
+        )
+        .await
+        .expect("lookup should succeed");
 
         assert!(matches!(result.0.status, QueueStatus::Canceled));
         assert_eq!(result.0.match_id, None);
@@ -231,8 +274,9 @@ mod tests {
     #[tokio::test]
     async fn lookup_ticket_returns_not_found_for_unknown_ticket() {
         let result = lookup_ticket(
-            State(app_state(Matchmaker::new())),
+            State(app_state(matchmaker())),
             Path("missing-ticket".to_string()),
+            Query(TicketOwnerQuery { player_id: 1 }),
         )
         .await;
 
@@ -246,8 +290,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cancel_ticket_returns_canceled_response() {
-        let mut matchmaker = Matchmaker::new();
+    async fn lookup_ticket_rejects_non_owner() {
+        let mut matchmaker = matchmaker();
         let queued = matchmaker.enqueue(EnqueuePlayer {
             player_id: 1,
             player_skill: 1200,
@@ -258,9 +302,45 @@ mod tests {
             _ => panic!("first player should be queued"),
         };
 
-        let result = cancel_ticket(State(app_state(matchmaker)), Path(ticket_id.clone()))
-            .await
-            .expect("cancel should succeed");
+        let result = lookup_ticket(
+            State(app_state(matchmaker)),
+            Path(ticket_id.clone()),
+            Query(TicketOwnerQuery { player_id: 2 }),
+        )
+        .await;
+
+        match result {
+            Ok(_) => panic!("non-owner lookup should fail"),
+            Err((status, error)) => {
+                assert_eq!(status, StatusCode::UNAUTHORIZED);
+                assert_eq!(
+                    error.0.message,
+                    format!("ticket_id {ticket_id} is not owned by the caller")
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn cancel_ticket_returns_canceled_response() {
+        let mut matchmaker = matchmaker();
+        let queued = matchmaker.enqueue(EnqueuePlayer {
+            player_id: 1,
+            player_skill: 1200,
+            region: "eu-west".into(),
+        });
+        let ticket_id = match queued {
+            TicketStatus::Waiting { ticket_id, .. } => ticket_id,
+            _ => panic!("first player should be queued"),
+        };
+
+        let result = cancel_ticket(
+            State(app_state(matchmaker)),
+            Path(ticket_id.clone()),
+            Query(TicketOwnerQuery { player_id: 1 }),
+        )
+        .await
+        .expect("cancel should succeed");
 
         assert!(matches!(result.0.status, QueueStatus::Canceled));
         assert_eq!(result.0.ticket_id, ticket_id);
@@ -269,7 +349,7 @@ mod tests {
 
     #[tokio::test]
     async fn cancel_ticket_rejects_matched_tickets() {
-        let mut matchmaker = Matchmaker::new();
+        let mut matchmaker = matchmaker();
         let queued = matchmaker.enqueue(EnqueuePlayer {
             player_id: 1,
             player_skill: 1200,
@@ -285,8 +365,12 @@ mod tests {
             region: "eu-west".into(),
         });
 
-        let result =
-            cancel_ticket(State(app_state(matchmaker)), Path(first_ticket_id.clone())).await;
+        let result = cancel_ticket(
+            State(app_state(matchmaker)),
+            Path(first_ticket_id.clone()),
+            Query(TicketOwnerQuery { player_id: 1 }),
+        )
+        .await;
 
         match result {
             Ok(_) => panic!("matched ticket cancel should fail"),

@@ -131,9 +131,11 @@ Current implemented head-service entrypoints:
   matched responses.
 - `GET /matchmaking/queue/{ticket_id}`: proxies ticket polling through head and
   returns waiting, canceled, or game-ready matched responses from the composed
-  matchmaking plus lobby-handoff flow.
+  matchmaking plus lobby-handoff flow. The client authenticates this route with
+  `Authorization: Bearer <session_token>`.
 - `DELETE /matchmaking/queue/{ticket_id}`: proxies ticket cancellation through
-  head and returns the resulting lifecycle state for the ticket.
+  head and returns the resulting lifecycle state for the ticket. The client
+  authenticates this route with `Authorization: Bearer <session_token>`.
 
 Current guest-flow layering inside `head_server/`:
 
@@ -141,13 +143,19 @@ Current guest-flow layering inside `head_server/`:
   responses.
 - `use_cases/guest.rs`: owns guest init/login orchestration and the auth port.
 - `interface_adapters/handlers/matchmaking.rs`: verifies matchmaking
-  requests, maps queue and poll responses, and forwards canonical identity or
-  ticket lookups to the matchmaking use case.
-- `use_cases/matchmaking.rs`: owns matchmaking queue-entry and ticket-polling
-  orchestration and the matchmaking port.
+  requests, extracts bearer auth for poll/cancel, maps lifecycle responses,
+  and forwards canonical identity or ticket operations to the matchmaking use
+  case.
+- `use_cases/matchmaking.rs`: owns matchmaking queue-entry, ticket-polling,
+  ticket-cancel, and game-server handoff orchestration plus the external
+  service ports.
 - `frameworks/auth_client.rs`: implements the auth port with reqwest.
 - `frameworks/matchmaking_client.rs`: implements the matchmaking port with
   reqwest.
+- `frameworks/game_server_client.rs`: implements the game-server lobby
+  provisioner port with reqwest.
+- `frameworks/game_server_directory.rs`: implements region-to-server resolution
+  for handoff.
 
 ## 8. Protocol and Tick Model (Planned Interface)
 

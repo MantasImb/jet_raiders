@@ -1,5 +1,5 @@
-use crate::domain::queue::{build_match_id, build_ticket_id};
 use std::collections::{HashMap, VecDeque};
+use std::sync::{Arc, Mutex};
 
 // Application request for queueing a player into matchmaking.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,12 +32,14 @@ pub enum TicketStatus {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TicketLookupError {
     NotFound { ticket_id: String },
+    Unauthorized { ticket_id: String },
 }
 
 // Errors that can occur while canceling a ticket.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CancelTicketError {
     NotFound { ticket_id: String },
+    Unauthorized { ticket_id: String },
     Matched { ticket_id: String },
 }
 
@@ -66,8 +68,13 @@ enum TicketRecord {
 }
 
 // In-memory matchmaker that pairs players based on region.
-#[derive(Debug, Default)]
+pub trait MatchIdGenerator: Send + Sync {
+    fn next_ticket_id(&self, player_id: u64) -> String;
+    fn next_match_id(&self, player_id: u64, opponent_id: u64) -> String;
+}
+
 pub struct Matchmaker {
+    ids: Arc<dyn MatchIdGenerator>,
     queue: VecDeque<String>,
     tickets_by_id: HashMap<String, TicketRecord>,
     active_ticket_by_player: HashMap<u64, String>,
@@ -76,8 +83,9 @@ pub struct Matchmaker {
 
 impl Matchmaker {
     // Create a new matchmaker with an empty queue.
-    pub fn new() -> Self {
+    pub fn new(ids: Arc<dyn MatchIdGenerator>) -> Self {
         Self {
+            ids,
             queue: VecDeque::new(),
             tickets_by_id: HashMap::new(),
             active_ticket_by_player: HashMap::new(),
@@ -104,7 +112,7 @@ impl Matchmaker {
             return self.create_match(opponent_ticket_id, request);
         }
 
-        let ticket_id = build_ticket_id(request.player_id);
+        let ticket_id = self.ids.next_ticket_id(request.player_id);
         self.tickets_by_id.insert(
             ticket_id.clone(),
             TicketRecord::Waiting {
@@ -124,7 +132,23 @@ impl Matchmaker {
     }
 
     // Look up the current status of a previously issued ticket.
-    pub fn lookup_ticket(&self, ticket_id: &str) -> Result<TicketStatus, TicketLookupError> {
+    pub fn lookup_ticket(
+        &self,
+        player_id: u64,
+        ticket_id: &str,
+    ) -> Result<TicketStatus, TicketLookupError> {
+        let Some(ticket) = self.tickets_by_id.get(ticket_id) else {
+            return Err(TicketLookupError::NotFound {
+                ticket_id: ticket_id.to_string(),
+            });
+        };
+
+        if !ticket.belongs_to(player_id) {
+            return Err(TicketLookupError::Unauthorized {
+                ticket_id: ticket_id.to_string(),
+            });
+        }
+
         self.status_for_ticket(ticket_id)
             .ok_or(TicketLookupError::NotFound {
                 ticket_id: ticket_id.to_string(),
@@ -132,12 +156,22 @@ impl Matchmaker {
     }
 
     // Cancel a waiting ticket so it no longer participates in matching.
-    pub fn cancel_ticket(&mut self, ticket_id: &str) -> Result<TicketStatus, CancelTicketError> {
+    pub fn cancel_ticket(
+        &mut self,
+        player_id: u64,
+        ticket_id: &str,
+    ) -> Result<TicketStatus, CancelTicketError> {
         let Some(ticket) = self.tickets_by_id.get(ticket_id).cloned() else {
             return Err(CancelTicketError::NotFound {
                 ticket_id: ticket_id.to_string(),
             });
         };
+
+        if !ticket.belongs_to(player_id) {
+            return Err(CancelTicketError::Unauthorized {
+                ticket_id: ticket_id.to_string(),
+            });
+        }
 
         match ticket {
             TicketRecord::Waiting {
@@ -190,7 +224,9 @@ impl Matchmaker {
 
         self.active_ticket_by_player.remove(&opponent_player_id);
 
-        let match_id = build_match_id(request.player_id, opponent_player_id);
+        let match_id = self
+            .ids
+            .next_match_id(request.player_id, opponent_player_id);
         let mut player_ids = vec![request.player_id, opponent_player_id];
         player_ids.sort_unstable();
 
@@ -202,16 +238,19 @@ impl Matchmaker {
                 region: region.clone(),
             },
         );
+        // Matched tickets and match records currently remain queryable for the
+        // process lifetime. Retention and eviction are intentionally out of
+        // scope for this plan and should be added in a later slice.
 
         self.tickets_by_id.insert(
-            opponent_ticket_id,
+            opponent_ticket_id.clone(),
             TicketRecord::Matched {
                 player_id: opponent_player_id,
                 match_id: match_id.clone(),
             },
         );
 
-        let ticket_id = build_ticket_id(request.player_id);
+        let ticket_id = self.ids.next_ticket_id(request.player_id);
         self.tickets_by_id.insert(
             ticket_id.clone(),
             TicketRecord::Matched {
@@ -219,10 +258,8 @@ impl Matchmaker {
                 match_id: match_id.clone(),
             },
         );
-        self.active_ticket_by_player.insert(
-            opponent_player_id,
-            self.ticket_id_for_player(opponent_player_id),
-        );
+        self.active_ticket_by_player
+            .insert(opponent_player_id, opponent_ticket_id);
         self.active_ticket_by_player
             .insert(request.player_id, ticket_id.clone());
 
@@ -259,19 +296,6 @@ impl Matchmaker {
         });
     }
 
-    fn ticket_id_for_player(&self, player_id: u64) -> String {
-        self.tickets_by_id
-            .iter()
-            .find_map(|(ticket_id, ticket)| match ticket {
-                TicketRecord::Matched {
-                    player_id: ticket_player_id,
-                    ..
-                } if *ticket_player_id == player_id => Some(ticket_id.clone()),
-                _ => None,
-            })
-            .expect("matched ticket should exist for active player")
-    }
-
     fn status_for_ticket(&self, ticket_id: &str) -> Option<TicketStatus> {
         let ticket = self.tickets_by_id.get(ticket_id)?;
 
@@ -301,9 +325,53 @@ impl Matchmaker {
     }
 }
 
+impl TicketRecord {
+    fn belongs_to(&self, player_id: u64) -> bool {
+        match self {
+            TicketRecord::Waiting {
+                player_id: ticket_player_id,
+                ..
+            }
+            | TicketRecord::Matched {
+                player_id: ticket_player_id,
+                ..
+            }
+            | TicketRecord::Canceled {
+                player_id: ticket_player_id,
+                ..
+            } => *ticket_player_id == player_id,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Debug, Default)]
+    struct TestIdGenerator {
+        next_id: Mutex<u64>,
+    }
+
+    impl MatchIdGenerator for TestIdGenerator {
+        fn next_ticket_id(&self, player_id: u64) -> String {
+            let mut next_id = self.next_id.lock().expect("lock should not be poisoned");
+            *next_id += 1;
+            format!("ticket-test-{}-{player_id}", *next_id)
+        }
+
+        fn next_match_id(&self, player_id: u64, opponent_id: u64) -> String {
+            let mut ids = [player_id, opponent_id];
+            ids.sort_unstable();
+            let mut next_id = self.next_id.lock().expect("lock should not be poisoned");
+            *next_id += 1;
+            format!("match-test-{}-{}-{}", *next_id, ids[0], ids[1])
+        }
+    }
+
+    fn matchmaker() -> Matchmaker {
+        Matchmaker::new(Arc::new(TestIdGenerator::default()))
+    }
 
     fn queue_request(player_id: u64, region: &str) -> EnqueuePlayer {
         EnqueuePlayer {
@@ -315,7 +383,7 @@ mod tests {
 
     #[test]
     fn queued_ticket_can_be_polled_while_still_waiting() {
-        let mut matchmaker = Matchmaker::new();
+        let mut matchmaker = matchmaker();
         let outcome = matchmaker.enqueue(queue_request(1, "eu-west"));
 
         let TicketStatus::Waiting { ticket_id, region } = outcome else {
@@ -324,7 +392,7 @@ mod tests {
         assert_eq!(region, "eu-west");
 
         assert_eq!(
-            matchmaker.lookup_ticket(ticket_id.as_str()),
+            matchmaker.lookup_ticket(1, ticket_id.as_str()),
             Ok(TicketStatus::Waiting {
                 ticket_id,
                 region: "eu-west".into(),
@@ -334,7 +402,7 @@ mod tests {
 
     #[test]
     fn reenqueue_while_waiting_returns_the_existing_waiting_ticket() {
-        let mut matchmaker = Matchmaker::new();
+        let mut matchmaker = matchmaker();
         let first_outcome = matchmaker.enqueue(queue_request(1, "eu-west"));
         let first_ticket_id = match first_outcome {
             TicketStatus::Waiting { ticket_id, .. } => ticket_id,
@@ -354,7 +422,7 @@ mod tests {
 
     #[test]
     fn queued_ticket_transitions_to_a_shared_matched_record_after_an_opponent_arrives() {
-        let mut matchmaker = Matchmaker::new();
+        let mut matchmaker = matchmaker();
         let waiting_outcome = matchmaker.enqueue(queue_request(1, "eu-west"));
         let first_ticket_id = match waiting_outcome {
             TicketStatus::Waiting { ticket_id, .. } => ticket_id,
@@ -377,7 +445,7 @@ mod tests {
         assert_eq!(region, "eu-west");
 
         assert_eq!(
-            matchmaker.lookup_ticket(first_ticket_id.as_str()),
+            matchmaker.lookup_ticket(1, first_ticket_id.as_str()),
             Ok(TicketStatus::Matched {
                 ticket_id: first_ticket_id.clone(),
                 match_id: match_id.clone(),
@@ -386,7 +454,7 @@ mod tests {
             })
         );
         assert_eq!(
-            matchmaker.lookup_ticket(second_ticket_id.as_str()),
+            matchmaker.lookup_ticket(2, second_ticket_id.as_str()),
             Ok(TicketStatus::Matched {
                 ticket_id: second_ticket_id,
                 match_id,
@@ -398,7 +466,7 @@ mod tests {
 
     #[test]
     fn reenqueue_while_matched_returns_the_existing_matched_result() {
-        let mut matchmaker = Matchmaker::new();
+        let mut matchmaker = matchmaker();
         let waiting_outcome = matchmaker.enqueue(queue_request(1, "eu-west"));
         let first_ticket_id = match waiting_outcome {
             TicketStatus::Waiting { ticket_id, .. } => ticket_id,
@@ -425,14 +493,14 @@ mod tests {
             }
         );
         assert!(matches!(
-            matchmaker.lookup_ticket(second_ticket_id.as_str()),
+            matchmaker.lookup_ticket(2, second_ticket_id.as_str()),
             Ok(TicketStatus::Matched { .. })
         ));
     }
 
     #[test]
     fn cancel_waiting_ticket_transitions_to_canceled() {
-        let mut matchmaker = Matchmaker::new();
+        let mut matchmaker = matchmaker();
         let waiting_outcome = matchmaker.enqueue(queue_request(1, "eu-west"));
         let ticket_id = match waiting_outcome {
             TicketStatus::Waiting { ticket_id, .. } => ticket_id,
@@ -440,14 +508,14 @@ mod tests {
         };
 
         assert_eq!(
-            matchmaker.cancel_ticket(ticket_id.as_str()),
+            matchmaker.cancel_ticket(1, ticket_id.as_str()),
             Ok(TicketStatus::Canceled {
                 ticket_id: ticket_id.clone(),
                 region: "eu-west".into(),
             })
         );
         assert_eq!(
-            matchmaker.lookup_ticket(ticket_id.as_str()),
+            matchmaker.lookup_ticket(1, ticket_id.as_str()),
             Ok(TicketStatus::Canceled {
                 ticket_id,
                 region: "eu-west".into(),
@@ -457,7 +525,7 @@ mod tests {
 
     #[test]
     fn canceling_a_matched_ticket_is_rejected() {
-        let mut matchmaker = Matchmaker::new();
+        let mut matchmaker = matchmaker();
         let first_outcome = matchmaker.enqueue(queue_request(1, "eu-west"));
         let first_ticket_id = match first_outcome {
             TicketStatus::Waiting { ticket_id, .. } => ticket_id,
@@ -470,13 +538,13 @@ mod tests {
         };
 
         assert_eq!(
-            matchmaker.cancel_ticket(first_ticket_id.as_str()),
+            matchmaker.cancel_ticket(1, first_ticket_id.as_str()),
             Err(CancelTicketError::Matched {
                 ticket_id: first_ticket_id,
             })
         );
         assert_eq!(
-            matchmaker.cancel_ticket(second_ticket_id.as_str()),
+            matchmaker.cancel_ticket(2, second_ticket_id.as_str()),
             Err(CancelTicketError::Matched {
                 ticket_id: second_ticket_id,
             })
@@ -485,14 +553,14 @@ mod tests {
 
     #[test]
     fn reenqueue_after_cancel_creates_a_new_ticket_and_discards_the_old_canceled_ticket() {
-        let mut matchmaker = Matchmaker::new();
+        let mut matchmaker = matchmaker();
         let first_outcome = matchmaker.enqueue(queue_request(1, "eu-west"));
         let first_ticket_id = match first_outcome {
             TicketStatus::Waiting { ticket_id, .. } => ticket_id,
             _ => panic!("first player should be queued"),
         };
         matchmaker
-            .cancel_ticket(first_ticket_id.as_str())
+            .cancel_ticket(1, first_ticket_id.as_str())
             .expect("cancel should succeed");
 
         let second_outcome = matchmaker.enqueue(queue_request(1, "eu-west"));
@@ -507,7 +575,7 @@ mod tests {
         assert_ne!(first_ticket_id, second_ticket_id);
         assert_eq!(region, "eu-west");
         assert_eq!(
-            matchmaker.lookup_ticket(first_ticket_id.as_str()),
+            matchmaker.lookup_ticket(1, first_ticket_id.as_str()),
             Err(TicketLookupError::NotFound {
                 ticket_id: first_ticket_id,
             })
@@ -515,17 +583,47 @@ mod tests {
     }
 
     #[test]
-    fn unknown_ticket_returns_not_found() {
-        let mut matchmaker = Matchmaker::new();
+    fn ticket_lookup_rejects_non_owner() {
+        let mut matchmaker = matchmaker();
+        let outcome = matchmaker.enqueue(queue_request(1, "eu-west"));
+        let ticket_id = match outcome {
+            TicketStatus::Waiting { ticket_id, .. } => ticket_id,
+            _ => panic!("first player should be queued"),
+        };
 
         assert_eq!(
-            matchmaker.lookup_ticket("missing-ticket"),
+            matchmaker.lookup_ticket(2, ticket_id.as_str()),
+            Err(TicketLookupError::Unauthorized { ticket_id })
+        );
+    }
+
+    #[test]
+    fn cancel_rejects_non_owner() {
+        let mut matchmaker = matchmaker();
+        let outcome = matchmaker.enqueue(queue_request(1, "eu-west"));
+        let ticket_id = match outcome {
+            TicketStatus::Waiting { ticket_id, .. } => ticket_id,
+            _ => panic!("first player should be queued"),
+        };
+
+        assert_eq!(
+            matchmaker.cancel_ticket(2, ticket_id.as_str()),
+            Err(CancelTicketError::Unauthorized { ticket_id })
+        );
+    }
+
+    #[test]
+    fn unknown_ticket_returns_not_found() {
+        let mut matchmaker = matchmaker();
+
+        assert_eq!(
+            matchmaker.lookup_ticket(1, "missing-ticket"),
             Err(TicketLookupError::NotFound {
                 ticket_id: "missing-ticket".into(),
             })
         );
         assert_eq!(
-            matchmaker.cancel_ticket("missing-ticket"),
+            matchmaker.cancel_ticket(1, "missing-ticket"),
             Err(CancelTicketError::NotFound {
                 ticket_id: "missing-ticket".into(),
             })

@@ -5,9 +5,13 @@ meta {
 }
 
 get {
-  url: {{process.env.HEAD_URL}}/matchmaking/queue/{{player_a_ticket_id}}?session_token={{player_a_session_token}}
+  url: {{process.env.HEAD_URL}}/matchmaking/queue/{{player_a_ticket_id}}
   body: none
   auth: none
+}
+
+headers {
+  Authorization: Bearer {{player_a_session_token}}
 }
 
 tests {

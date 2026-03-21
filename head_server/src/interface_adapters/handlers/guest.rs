@@ -157,6 +157,7 @@ mod tests {
 
         async fn poll_status(
             &self,
+            _player_id: u64,
             _ticket_id: String,
         ) -> Result<MatchmakingLifecycleState, MatchmakingProviderError> {
             panic!("matchmaking should not be called");
@@ -164,6 +165,7 @@ mod tests {
 
         async fn cancel(
             &self,
+            _player_id: u64,
             _ticket_id: String,
         ) -> Result<MatchmakingLifecycleState, MatchmakingProviderError> {
             panic!("matchmaking should not be called");

@@ -8,6 +8,12 @@ pub struct QueueRequest {
     pub region: String,
 }
 
+// Query parameters for owner-scoped ticket operations.
+#[derive(Debug, Deserialize)]
+pub struct TicketOwnerQuery {
+    pub player_id: u64,
+}
+
 // Response payload returned after queue lifecycle operations.
 #[derive(Debug, Serialize)]
 pub struct QueueResponse {

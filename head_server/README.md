@@ -135,6 +135,12 @@ Game-ready matched response:
 
 Polls the current status of a previously issued queue ticket.
 
+Request header:
+
+```text
+Authorization: Bearer <session_token>
+```
+
 Waiting response:
 
 ```json
@@ -170,6 +176,12 @@ Game-ready matched response:
 ### `DELETE /matchmaking/queue/{ticket_id}`
 
 Cancels a waiting matchmaking ticket through head.
+
+Request header:
+
+```text
+Authorization: Bearer <session_token>
+```
 
 ## Error Behavior
 

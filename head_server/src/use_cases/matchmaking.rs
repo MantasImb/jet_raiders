@@ -61,6 +61,7 @@ pub enum MatchmakingLifecycleState {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MatchmakingProviderError {
+    Unauthorized,
     BadRequest,
     Conflict,
     NotFound,
@@ -72,6 +73,7 @@ pub enum MatchmakingProviderError {
 impl fmt::Display for MatchmakingProviderError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            MatchmakingProviderError::Unauthorized => write!(f, "unauthorized"),
             MatchmakingProviderError::BadRequest => write!(f, "bad request"),
             MatchmakingProviderError::Conflict => write!(f, "conflict"),
             MatchmakingProviderError::NotFound => write!(f, "not found"),
@@ -229,6 +231,7 @@ impl From<AuthProviderError> for CancelMatchmakingError {
 impl From<MatchmakingProviderError> for EnterMatchmakingError {
     fn from(error: MatchmakingProviderError) -> Self {
         match error {
+            MatchmakingProviderError::Unauthorized => EnterMatchmakingError::Unauthorized,
             MatchmakingProviderError::BadRequest => EnterMatchmakingError::BadRequest,
             MatchmakingProviderError::Conflict | MatchmakingProviderError::NotFound => {
                 EnterMatchmakingError::Unexpected
@@ -247,6 +250,7 @@ impl From<MatchmakingProviderError> for EnterMatchmakingError {
 impl From<MatchmakingProviderError> for PollMatchmakingError {
     fn from(error: MatchmakingProviderError) -> Self {
         match error {
+            MatchmakingProviderError::Unauthorized => PollMatchmakingError::Unauthorized,
             MatchmakingProviderError::BadRequest => PollMatchmakingError::BadRequest,
             MatchmakingProviderError::Conflict => PollMatchmakingError::Unexpected,
             MatchmakingProviderError::NotFound => PollMatchmakingError::NotFound,
@@ -264,6 +268,7 @@ impl From<MatchmakingProviderError> for PollMatchmakingError {
 impl From<MatchmakingProviderError> for CancelMatchmakingError {
     fn from(error: MatchmakingProviderError) -> Self {
         match error {
+            MatchmakingProviderError::Unauthorized => CancelMatchmakingError::Unauthorized,
             MatchmakingProviderError::BadRequest => CancelMatchmakingError::BadRequest,
             MatchmakingProviderError::Conflict => CancelMatchmakingError::Conflict,
             MatchmakingProviderError::NotFound => CancelMatchmakingError::NotFound,
@@ -321,11 +326,13 @@ pub trait MatchmakingProvider: Send + Sync {
 
     async fn poll_status(
         &self,
+        player_id: u64,
         ticket_id: String,
     ) -> Result<MatchmakingLifecycleState, MatchmakingProviderError>;
 
     async fn cancel(
         &self,
+        player_id: u64,
         ticket_id: String,
     ) -> Result<MatchmakingLifecycleState, MatchmakingProviderError>;
 }
@@ -405,13 +412,14 @@ impl MatchmakingService {
         &self,
         request: PollMatchmaking,
     ) -> Result<HeadMatchmakingResult, PollMatchmakingError> {
-        self.verify_caller_session(request.session_token)
+        let session = self
+            .verify_caller_session(request.session_token)
             .await
             .map_err(PollMatchmakingError::from)?;
 
         let state = self
             .matchmaking
-            .poll_status(request.ticket_id)
+            .poll_status(session.user_id, request.ticket_id)
             .await
             .map_err(PollMatchmakingError::from)?;
 
@@ -424,13 +432,14 @@ impl MatchmakingService {
         &self,
         request: CancelMatchmaking,
     ) -> Result<HeadMatchmakingResult, CancelMatchmakingError> {
-        self.verify_caller_session(request.session_token)
+        let session = self
+            .verify_caller_session(request.session_token)
             .await
             .map_err(CancelMatchmakingError::from)?;
 
         let state = self
             .matchmaking
-            .cancel(request.ticket_id)
+            .cancel(session.user_id, request.ticket_id)
             .await
             .map_err(CancelMatchmakingError::from)?;
 
@@ -577,6 +586,7 @@ mod tests {
 
         async fn poll_status(
             &self,
+            _player_id: u64,
             ticket_id: String,
         ) -> Result<MatchmakingLifecycleState, MatchmakingProviderError> {
             self.poll_requests.lock().unwrap().push(ticket_id);
@@ -589,6 +599,7 @@ mod tests {
 
         async fn cancel(
             &self,
+            _player_id: u64,
             ticket_id: String,
         ) -> Result<MatchmakingLifecycleState, MatchmakingProviderError> {
             self.cancel_requests.lock().unwrap().push(ticket_id);

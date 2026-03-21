@@ -38,15 +38,17 @@ leaving room for additional matchmaking rules later.
     - A `ticket_id` is issued so the head service can track the request.
     - The service responds with `status: waiting`.
 6. **Polling**:
-    - The head service can later call `GET /matchmaking/queue/{ticket_id}`.
+    - The head service can later call
+      `GET /matchmaking/queue/{ticket_id}?player_id=<owner_id>`.
     - A queued ticket returns `status: waiting` plus the same `ticket_id`.
     - A matched ticket returns `status: matched` plus the stable
       `ticket_id`, `match_id`, `player_ids`, and `region` payload.
 7. **Cancellation**:
-    - The head service can call `DELETE /matchmaking/queue/{ticket_id}`.
+    - The head service can call
+      `DELETE /matchmaking/queue/{ticket_id}?player_id=<owner_id>`.
     - Waiting tickets transition to `status: canceled`.
     - Matched tickets reject cancellation with `409`.
-7. **Head service response**: The head service receives the response and either
+8. **Head service response**: The head service receives the response and either
    notifies the client immediately (matched) or keeps the client polling until
    later orchestration phases complete the final handoff.
 
@@ -59,9 +61,13 @@ leaving room for additional matchmaking rules later.
   - Returns a queue ticket or match assignment.
 - `GET /matchmaking/queue/{ticket_id}`
   - Looks up the current status of an issued queue ticket.
+  - Requires the owning `player_id` as a query parameter for head-scoped
+    authorization.
   - Returns the waiting, matched, or canceled state for that ticket.
 - `DELETE /matchmaking/queue/{ticket_id}`
   - Cancels a waiting queue ticket.
+  - Requires the owning `player_id` as a query parameter for head-scoped
+    authorization.
   - Returns the canceled state for that ticket.
 
 ## Data Contracts
@@ -83,11 +89,14 @@ leaving room for additional matchmaking rules later.
 ### Ticket Errors
 
 - Unknown `ticket_id` values return `404`.
+- Owner mismatches for lookup or cancel return `401`.
 - Canceling a matched `ticket_id` returns `409`.
 
 ## Security Considerations
 
 - Authenticate requests at the head service before calling matchmaking.
+- Head forwards the canonical owning `player_id` on lookup and cancel so the
+  service can reject cross-user ticket access.
 - Avoid leaking internal server addresses to unauthenticated clients.
 
 ## Dependencies

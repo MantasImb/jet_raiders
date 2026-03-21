@@ -103,9 +103,12 @@ impl MatchmakingProvider for MatchmakingClient {
 
     async fn poll_status(
         &self,
+        player_id: u64,
         ticket_id: String,
     ) -> Result<MatchmakingLifecycleState, MatchmakingProviderError> {
-        let url = self.endpoint(&format!("matchmaking/queue/{ticket_id}"))?;
+        let url = self.endpoint(&format!(
+            "matchmaking/queue/{ticket_id}?player_id={player_id}"
+        ))?;
         let response = self
             .http
             .get(url)
@@ -118,9 +121,12 @@ impl MatchmakingProvider for MatchmakingClient {
 
     async fn cancel(
         &self,
+        player_id: u64,
         ticket_id: String,
     ) -> Result<MatchmakingLifecycleState, MatchmakingProviderError> {
-        let url = self.endpoint(&format!("matchmaking/queue/{ticket_id}"))?;
+        let url = self.endpoint(&format!(
+            "matchmaking/queue/{ticket_id}?player_id={player_id}"
+        ))?;
         let response = self
             .http
             .delete(url)
@@ -176,6 +182,7 @@ async fn ensure_success_response(response: Response) -> Result<Response, Matchma
 
 fn map_status_to_error(status: StatusCode) -> MatchmakingProviderError {
     match status {
+        StatusCode::UNAUTHORIZED => MatchmakingProviderError::Unauthorized,
         StatusCode::BAD_REQUEST => MatchmakingProviderError::BadRequest,
         StatusCode::CONFLICT => MatchmakingProviderError::Conflict,
         StatusCode::NOT_FOUND => MatchmakingProviderError::NotFound,
@@ -209,7 +216,7 @@ mod tests {
         log.paths
             .lock()
             .expect("lock should not be poisoned")
-            .push(request.uri().path().to_string());
+            .push(request.uri().to_string());
 
         (
             AxumStatusCode::OK,
@@ -318,7 +325,7 @@ mod tests {
             MatchmakingClient::new(&format!("{base_url}/prefix")).expect("client should build");
 
         let result = client
-            .poll_status("ticket-123".into())
+            .poll_status(42, "ticket-123".into())
             .await
             .expect("request should succeed");
 
@@ -334,7 +341,7 @@ mod tests {
                 .lock()
                 .expect("lock should not be poisoned")
                 .as_slice(),
-            &["/prefix/matchmaking/queue/ticket-123".to_string()]
+            &["/prefix/matchmaking/queue/ticket-123?player_id=42".to_string()]
         );
     }
 
@@ -352,7 +359,7 @@ mod tests {
             MatchmakingClient::new(&format!("{base_url}/prefix")).expect("client should build");
 
         let result = client
-            .cancel("ticket-123".into())
+            .cancel(42, "ticket-123".into())
             .await
             .expect("request should succeed");
 
@@ -368,7 +375,7 @@ mod tests {
                 .lock()
                 .expect("lock should not be poisoned")
                 .as_slice(),
-            &["/prefix/matchmaking/queue/ticket-123".to_string()]
+            &["/prefix/matchmaking/queue/ticket-123?player_id=42".to_string()]
         );
     }
 
