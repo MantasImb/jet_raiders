@@ -42,6 +42,12 @@ pub struct HeadEnterMatchmakingRequest {
     pub region: String,
 }
 
+#[derive(Deserialize)]
+pub struct HeadPollMatchmakingQuery {
+    // Auth session token used to verify the ticket owner before polling.
+    pub session_token: String,
+}
+
 #[derive(Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum HeadMatchmakingStatus {
@@ -63,5 +69,22 @@ pub struct HeadMatchmakingResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub opponent_id: Option<String>,
     // Region that the queue request was evaluated against.
+    pub region: String,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct HeadPollMatchmakingResponse {
+    // Queue status returned by head after polling the matchmaking service.
+    pub status: HeadMatchmakingStatus,
+    // Waiting ticket returned while the player remains queued.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ticket_id: Option<String>,
+    // Match identifier returned when the ticket transitions to matched.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub match_id: Option<String>,
+    // Opponent identifier currently surfaced from the upstream poll result.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub opponent_id: Option<String>,
+    // Region attached to the current ticket status.
     pub region: String,
 }

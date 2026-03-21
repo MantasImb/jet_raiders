@@ -40,9 +40,9 @@ Status snapshot as of **March 19, 2026**:
 - `auth_server/`, `head_server/`, `game_server/`, and `matchmaking_server/`
   are runnable Rust services.
 - `head_server/` currently exposes guest identity/session HTTP APIs and
-  matchmaking queue-entry HTTP APIs, routes them through use-case
-  orchestration, and calls `auth_server/` and `matchmaking_server/` through
-  injected ports.
+  matchmaking queue-entry and ticket-polling HTTP APIs, routes them through
+  use-case orchestration, and calls `auth_server/` and `matchmaking_server/`
+  through injected ports.
 - `website/` is still in scaffold/placeholder stage.
 - The active Godot project lives in `game_client/`.
 
@@ -110,11 +110,12 @@ game_server/
    the canonical player identity.
 3. Head service forwards that canonical identity to matchmaking service.
 4. Client receives either a waiting `ticket_id` or an immediate match result.
-5. Client connects to game server and joins the assigned lobby after later
+5. Client polls head with `ticket_id` while waiting.
+6. Client connects to game server and joins the assigned lobby after later
    phases complete handoff.
-6. Game server validates identity/session (directly or via auth-backed token
+7. Game server validates identity/session (directly or via auth-backed token
    verification).
-7. Client sends input; server runs simulation ticks and broadcasts snapshots.
+8. Client sends input; server runs simulation ticks and broadcasts snapshots.
 
 Current implemented head-service entrypoints:
 
@@ -126,6 +127,10 @@ Current implemented head-service entrypoints:
   auth, forwards the canonical player identity to matchmaking, and returns
   `status`, `ticket_id`, and `region` for waiting responses or `status`,
   `match_id`, `opponent_id`, and `region` for immediate matches.
+- `GET /matchmaking/queue/{ticket_id}`: proxies ticket polling through head and
+  currently returns `status`, `ticket_id`, and `region` for waiting responses
+  or `status`, `match_id`, `opponent_id`, and `region` for matched responses
+  until the later lobby-handoff phase is implemented.
 
 Current guest-flow layering inside `head_server/`:
 
@@ -133,10 +138,10 @@ Current guest-flow layering inside `head_server/`:
   responses.
 - `use_cases/guest.rs`: owns guest init/login orchestration and the auth port.
 - `interface_adapters/handlers/matchmaking.rs`: verifies matchmaking
-  requests, maps queue responses, and forwards canonical identity to the
-  matchmaking use case.
-- `use_cases/matchmaking.rs`: owns matchmaking queue-entry orchestration and
-  the matchmaking port.
+  requests, maps queue and poll responses, and forwards canonical identity or
+  ticket lookups to the matchmaking use case.
+- `use_cases/matchmaking.rs`: owns matchmaking queue-entry and ticket-polling
+  orchestration and the matchmaking port.
 - `frameworks/auth_client.rs`: implements the auth port with reqwest.
 - `frameworks/matchmaking_client.rs`: implements the matchmaking port with
   reqwest.

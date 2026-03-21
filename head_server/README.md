@@ -39,6 +39,9 @@ under `head_server/`.
 - Accept matchmaking queue-entry requests from clients.
 - Verify `session_token` through auth before queueing canonical player identity.
 - Orchestrate matchmaking queue entry through a dedicated use-case service.
+- Accept matchmaking polling requests keyed by `ticket_id`.
+- Proxy ticket status lookup to `matchmaking_server` through the same dedicated
+  matchmaking use-case boundary.
 - Call `matchmaking_server` through a dedicated reqwest client port.
 - Return head-level response DTOs suitable for client usage.
 
@@ -123,6 +126,31 @@ Immediate match response:
 }
 ```
 
+### `GET /matchmaking/queue/{ticket_id}`
+
+Polls the current status of a previously issued queue ticket.
+
+Waiting response:
+
+```json
+{
+  "status": "waiting",
+  "ticket_id": "ticket-123",
+  "region": "eu-west"
+}
+```
+
+Current matched response during phase 2:
+
+```json
+{
+  "status": "matched",
+  "match_id": "match-123",
+  "opponent_id": "player-7",
+  "region": "eu-west"
+}
+```
+
 ## Error Behavior
 
 - Invalid `guest_id` format in `/guest/login` returns `400`.
@@ -131,9 +159,13 @@ Immediate match response:
 - Upstream transport/failure conditions return `502`.
 - Invalid matchmaking requests return `400`.
 - Upstream matchmaking `409` responses return `409`.
+- Unknown `ticket_id` values in `/matchmaking/queue/{ticket_id}` return `404`.
 - Matchmaking transport/failure conditions return `502`.
 - The queue-entry flow does not create lobbies yet; matched responses are
   surfaced directly from the matchmaking service contract for now.
+- The polling flow also does not create lobbies yet in phase 2; a poll that
+  reports `matched` still reflects the upstream matchmaking state rather than a
+  completed game-server handoff.
 
 ## Runtime and Configuration
 
@@ -147,13 +179,14 @@ Immediate match response:
 ## Dependencies
 
 - `auth_server` for guest identity/session operations.
-- `matchmaking_server` for queue-entry orchestration.
+- `matchmaking_server` for queue-entry orchestration and ticket polling.
 
 ## Layer Notes
 
 - `interface_adapters/` owns head HTTP DTOs, request validation, and HTTP error mapping.
 - `use_cases/` owns guest session orchestration, matchmaking queue orchestration,
-  and the `AuthProvider` / `MatchmakingProvider` ports.
+  matchmaking ticket polling, and the `AuthProvider` / `MatchmakingProvider`
+  ports.
 - `frameworks/` owns the concrete reqwest auth and matchmaking clients plus runtime wiring.
 - `domain/` is reserved for future head-specific business entities and invariants.
 
@@ -165,6 +198,5 @@ implemented in current routes:
 - web app shell endpoints
 - profile management endpoints
 - party/friends/inventory endpoints
-- matchmaking polling endpoints
 - matchmaking cancellation endpoints
 - lobby handoff and regional game-server routing

@@ -1,8 +1,13 @@
 use std::time::{SystemTime, UNIX_EPOCH};
+use uuid::Uuid;
 
 // A player waiting to be matched.
+// Some fields are reserved for later matchmaking phases and are not consumed
+// by the current queue logic yet.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct WaitingPlayer {
+    pub ticket_id: String,
     pub player_id: String,
     pub player_skill: u32,
     pub region: String,
@@ -11,8 +16,9 @@ pub struct WaitingPlayer {
 
 impl WaitingPlayer {
     // Create a new waiting player record with a timestamp.
-    pub fn new(player_id: String, player_skill: u32, region: String) -> Self {
+    pub fn new(ticket_id: String, player_id: String, player_skill: u32, region: String) -> Self {
         Self {
+            ticket_id,
             player_id,
             player_skill,
             region,
@@ -23,7 +29,14 @@ impl WaitingPlayer {
 
 // Build a simple queue ticket identifier.
 pub fn build_ticket_id(player_id: &str) -> String {
-    format!("ticket-{}-{}", current_epoch_seconds(), player_id)
+    // Include a random nonce so rapid re-queues by the same player produce
+    // distinct ticket IDs even within the same second.
+    format!(
+        "ticket-{}-{}-{}",
+        current_epoch_seconds(),
+        Uuid::new_v4(),
+        player_id
+    )
 }
 
 // Build a simple match identifier with deterministically ordered player IDs.
@@ -40,4 +53,17 @@ fn current_epoch_seconds() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn repeated_ticket_generation_for_the_same_player_returns_distinct_ids() {
+        let first = build_ticket_id("player-1");
+        let second = build_ticket_id("player-1");
+
+        assert_ne!(first, second);
+    }
 }

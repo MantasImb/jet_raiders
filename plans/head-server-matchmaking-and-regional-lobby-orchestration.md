@@ -67,6 +67,8 @@ match result from the existing matchmaking behavior.
 
 **User stories**: 5, 6, 13
 
+**Status**: Implemented in `head_server` and `matchmaking_server`.
+
 ### What to build
 
 Extend matchmaking with ticket-based status lookup and add the corresponding
@@ -80,15 +82,15 @@ service contracts.
 
 ### Acceptance criteria
 
-- [ ] The matchmaking service exposes a status lookup contract keyed by
+- [x] The matchmaking service exposes a status lookup contract keyed by
       `ticket_id`.
-- [ ] The head server exposes a client-facing polling endpoint that proxies to
+- [x] The head server exposes a client-facing polling endpoint that proxies to
       matchmaking.
-- [ ] A waiting ticket returns a waiting response without any lobby-creation
+- [x] A waiting ticket returns a waiting response without any lobby-creation
       attempt.
-- [ ] The poll flow is fully testable through head with mocked upstream
+- [x] The poll flow is fully testable through head with mocked upstream
       responses.
-- [ ] Matchmaking tests cover ticket lookup behavior and expected status
+- [x] Matchmaking tests cover ticket lookup behavior and expected status
       transitions.
 
 ---

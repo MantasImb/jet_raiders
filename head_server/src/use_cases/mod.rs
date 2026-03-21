@@ -7,5 +7,6 @@ pub use guest::{
 };
 pub use matchmaking::{
     EnterMatchmaking, EnterMatchmakingError, MatchmakingEnqueueResult, MatchmakingProvider,
-    MatchmakingProviderError, MatchmakingQueueRequest, MatchmakingService,
+    MatchmakingProviderError, MatchmakingQueueRequest, MatchmakingService, MatchmakingTicketStatus,
+    PollMatchmaking, PollMatchmakingError,
 };

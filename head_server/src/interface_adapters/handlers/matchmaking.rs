@@ -1,9 +1,17 @@
 use crate::interface_adapters::protocol::{
     HeadEnterMatchmakingRequest, HeadMatchmakingResponse, HeadMatchmakingStatus,
+    HeadPollMatchmakingQuery, HeadPollMatchmakingResponse,
 };
 use crate::interface_adapters::state::AppState;
-use crate::use_cases::{EnterMatchmaking, EnterMatchmakingError, MatchmakingEnqueueResult};
-use axum::{Json, extract::State, http::StatusCode};
+use crate::use_cases::{
+    EnterMatchmaking, EnterMatchmakingError, MatchmakingEnqueueResult, MatchmakingTicketStatus,
+    PollMatchmaking, PollMatchmakingError,
+};
+use axum::{
+    Json,
+    extract::{Path, Query, State},
+    http::StatusCode,
+};
 use std::sync::Arc;
 
 #[tracing::instrument(
@@ -19,14 +27,12 @@ pub async fn enter_matchmaking(
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    // Convert the HTTP request into an application command.
     let request = EnterMatchmaking {
         session_token: body.session_token,
         player_skill: body.player_skill,
         region: body.region,
     };
 
-    // Delegate queue orchestration to the use-case layer.
     let result = state
         .matchmaking
         .enter_queue(request)
@@ -60,6 +66,52 @@ pub async fn enter_matchmaking(
     Ok(Json(response))
 }
 
+#[tracing::instrument(name = "poll_matchmaking", skip_all, fields(ticket_id = %ticket_id))]
+pub async fn poll_matchmaking(
+    State(state): State<Arc<AppState>>,
+    Path(ticket_id): Path<String>,
+    Query(query): Query<HeadPollMatchmakingQuery>,
+) -> Result<Json<HeadPollMatchmakingResponse>, StatusCode> {
+    if ticket_id.trim().is_empty() || query.session_token.trim().is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    let result = state
+        .matchmaking
+        .poll_status(PollMatchmaking {
+            session_token: query.session_token,
+            ticket_id,
+        })
+        .await
+        .map_err(|error| {
+            tracing::error!(?error, "failed to poll matchmaking.");
+            map_poll_matchmaking_error(&error)
+        })?;
+
+    let response = match result {
+        MatchmakingTicketStatus::Waiting { ticket_id, region } => HeadPollMatchmakingResponse {
+            status: HeadMatchmakingStatus::Waiting,
+            ticket_id: Some(ticket_id),
+            match_id: None,
+            opponent_id: None,
+            region,
+        },
+        MatchmakingTicketStatus::Matched {
+            match_id,
+            opponent_id,
+            region,
+        } => HeadPollMatchmakingResponse {
+            status: HeadMatchmakingStatus::Matched,
+            ticket_id: None,
+            match_id: Some(match_id),
+            opponent_id: Some(opponent_id),
+            region,
+        },
+    };
+
+    Ok(Json(response))
+}
+
 fn map_matchmaking_error(error: &EnterMatchmakingError) -> StatusCode {
     match error {
         EnterMatchmakingError::Unauthorized => StatusCode::UNAUTHORIZED,
@@ -71,13 +123,25 @@ fn map_matchmaking_error(error: &EnterMatchmakingError) -> StatusCode {
     }
 }
 
+fn map_poll_matchmaking_error(error: &PollMatchmakingError) -> StatusCode {
+    match error {
+        PollMatchmakingError::Unauthorized => StatusCode::UNAUTHORIZED,
+        PollMatchmakingError::BadRequest => StatusCode::BAD_REQUEST,
+        PollMatchmakingError::NotFound => StatusCode::NOT_FOUND,
+        PollMatchmakingError::UnexpectedClientError
+        | PollMatchmakingError::UpstreamUnavailable
+        | PollMatchmakingError::Unexpected => StatusCode::BAD_GATEWAY,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::use_cases::{
         AuthProvider, GuestInit, GuestInitResult, GuestLogin, GuestLoginResult,
         GuestSessionService, MatchmakingProvider, MatchmakingProviderError,
-        MatchmakingQueueRequest, MatchmakingService, VerifySession, VerifySessionResult,
+        MatchmakingQueueRequest, MatchmakingService, MatchmakingTicketStatus, VerifySession,
+        VerifySessionResult,
     };
     use async_trait::async_trait;
     use std::sync::{Arc, Mutex};
@@ -119,6 +183,7 @@ mod tests {
     #[derive(Default)]
     struct MockMatchmakingProvider {
         enqueue_response: Mutex<Option<Result<MatchmakingEnqueueResult, MatchmakingProviderError>>>,
+        poll_response: Mutex<Option<Result<MatchmakingTicketStatus, MatchmakingProviderError>>>,
     }
 
     #[async_trait]
@@ -132,6 +197,17 @@ mod tests {
                 .expect("lock should not be poisoned")
                 .take()
                 .expect("enqueue response should be configured")
+        }
+
+        async fn poll_status(
+            &self,
+            _ticket_id: String,
+        ) -> Result<MatchmakingTicketStatus, MatchmakingProviderError> {
+            self.poll_response
+                .lock()
+                .expect("lock should not be poisoned")
+                .take()
+                .expect("poll response should be configured")
         }
     }
 
@@ -183,6 +259,7 @@ mod tests {
                     ticket_id: "ticket-123".into(),
                     region: "eu-west".into(),
                 }))),
+                ..Default::default()
             }),
         );
         let result = enter_matchmaking(
@@ -220,6 +297,7 @@ mod tests {
                     opponent_id: "player-2".into(),
                     region: "eu-west".into(),
                 }))),
+                ..Default::default()
             }),
         );
         let result = enter_matchmaking(
@@ -289,6 +367,7 @@ mod tests {
                     }) as Arc<dyn AuthProvider>,
                     Arc::new(MockMatchmakingProvider {
                         enqueue_response: Mutex::new(Some(Err(matchmaking_error))),
+                        ..Default::default()
                     }) as Arc<dyn MatchmakingProvider>,
                 ),
             };
@@ -300,6 +379,149 @@ mod tests {
                     session_token: "token-123".into(),
                     player_skill: 1200,
                     region: "eu-west".into(),
+                }),
+            )
+            .await;
+
+            match result {
+                Ok(_) => panic!("provider errors should fail"),
+                Err(status) => assert_eq!(status, expected_status),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn poll_matchmaking_returns_waiting_response() {
+        let state = app_state(
+            Arc::new(MockAuthProvider {
+                verify_response: Mutex::new(Some(Ok(VerifySessionResult {
+                    user_id: 42,
+                    display_name: "Pilot".into(),
+                    session_id: "session-1".into(),
+                    expires_at: 123,
+                }))),
+            }),
+            Arc::new(MockMatchmakingProvider {
+                poll_response: Mutex::new(Some(Ok(MatchmakingTicketStatus::Waiting {
+                    ticket_id: "ticket-123".into(),
+                    region: "eu-west".into(),
+                }))),
+                ..Default::default()
+            }),
+        );
+        let result = poll_matchmaking(
+            State(state),
+            Path("ticket-123".to_string()),
+            Query(HeadPollMatchmakingQuery {
+                session_token: "token-123".into(),
+            }),
+        )
+        .await
+        .expect("poll should succeed");
+
+        assert_eq!(result.0.status, HeadMatchmakingStatus::Waiting);
+        assert_eq!(result.0.ticket_id.as_deref(), Some("ticket-123"));
+        assert_eq!(result.0.match_id, None);
+        assert_eq!(result.0.opponent_id, None);
+        assert_eq!(result.0.region, "eu-west");
+    }
+
+    #[tokio::test]
+    async fn poll_matchmaking_returns_matched_response() {
+        let state = app_state(
+            Arc::new(MockAuthProvider {
+                verify_response: Mutex::new(Some(Ok(VerifySessionResult {
+                    user_id: 42,
+                    display_name: "Pilot".into(),
+                    session_id: "session-1".into(),
+                    expires_at: 123,
+                }))),
+            }),
+            Arc::new(MockMatchmakingProvider {
+                poll_response: Mutex::new(Some(Ok(MatchmakingTicketStatus::Matched {
+                    match_id: "match-123".into(),
+                    opponent_id: "player-2".into(),
+                    region: "eu-west".into(),
+                }))),
+                ..Default::default()
+            }),
+        );
+        let result = poll_matchmaking(
+            State(state),
+            Path("ticket-123".to_string()),
+            Query(HeadPollMatchmakingQuery {
+                session_token: "token-123".into(),
+            }),
+        )
+        .await
+        .expect("poll should succeed");
+
+        assert_eq!(result.0.status, HeadMatchmakingStatus::Matched);
+        assert_eq!(result.0.ticket_id, None);
+        assert_eq!(result.0.match_id.as_deref(), Some("match-123"));
+        assert_eq!(result.0.opponent_id.as_deref(), Some("player-2"));
+        assert_eq!(result.0.region, "eu-west");
+    }
+
+    #[tokio::test]
+    async fn poll_matchmaking_maps_errors_to_http_status_codes() {
+        let cases = [
+            (
+                Err(crate::use_cases::AuthProviderError::Unauthorized),
+                StatusCode::UNAUTHORIZED,
+            ),
+            (
+                Ok(MatchmakingProviderError::BadRequest),
+                StatusCode::BAD_REQUEST,
+            ),
+            (
+                Ok(MatchmakingProviderError::NotFound),
+                StatusCode::NOT_FOUND,
+            ),
+            (
+                Ok(MatchmakingProviderError::UnexpectedClientError),
+                StatusCode::BAD_GATEWAY,
+            ),
+            (
+                Ok(MatchmakingProviderError::UpstreamUnavailable),
+                StatusCode::BAD_GATEWAY,
+            ),
+            (
+                Ok(MatchmakingProviderError::Unexpected),
+                StatusCode::BAD_GATEWAY,
+            ),
+        ];
+
+        for (error_source, expected_status) in cases {
+            let (auth, matchmaking) = match error_source {
+                Err(auth_error) => (
+                    Arc::new(MockAuthProvider {
+                        verify_response: Mutex::new(Some(Err(auth_error))),
+                    }) as Arc<dyn AuthProvider>,
+                    Arc::new(MockMatchmakingProvider::default()) as Arc<dyn MatchmakingProvider>,
+                ),
+                Ok(matchmaking_error) => (
+                    Arc::new(MockAuthProvider {
+                        verify_response: Mutex::new(Some(Ok(VerifySessionResult {
+                            user_id: 42,
+                            display_name: "Pilot".into(),
+                            session_id: "session-1".into(),
+                            expires_at: 123,
+                        }))),
+                    }) as Arc<dyn AuthProvider>,
+                    Arc::new(MockMatchmakingProvider {
+                        poll_response: Mutex::new(Some(Err(matchmaking_error))),
+                        ..Default::default()
+                    }) as Arc<dyn MatchmakingProvider>,
+                ),
+            };
+            let state = app_state(auth, matchmaking);
+
+            let result = poll_matchmaking(
+                State(state),
+                Path("ticket-123".to_string()),
+                Query(HeadPollMatchmakingQuery {
+                    session_token: "token-123".into(),
                 }),
             )
             .await;

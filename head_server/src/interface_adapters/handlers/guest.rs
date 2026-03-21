@@ -153,6 +153,13 @@ mod tests {
         ) -> Result<MatchmakingEnqueueResult, MatchmakingProviderError> {
             panic!("matchmaking should not be called");
         }
+
+        async fn poll_status(
+            &self,
+            _ticket_id: String,
+        ) -> Result<crate::use_cases::MatchmakingTicketStatus, MatchmakingProviderError> {
+            panic!("matchmaking should not be called");
+        }
     }
 
     fn app_state(auth: Arc<dyn AuthProvider>) -> Arc<AppState> {
