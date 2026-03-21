@@ -97,9 +97,10 @@ fn map_guest_session_error(error: &AuthProviderError) -> StatusCode {
 mod tests {
     use super::*;
     use crate::use_cases::{
-        AuthProvider, GuestInitResult, GuestLoginResult, GuestSessionService,
-        MatchmakingEnqueueResult, MatchmakingProvider, MatchmakingProviderError,
-        MatchmakingService,
+        AuthProvider, CreateGameLobby, CreateGameLobbyResult, GameServerDirectory, GameServerError,
+        GameServerProvisioner, GuestInitResult, GuestLoginResult, GuestSessionService,
+        MatchmakingLifecycleState, MatchmakingProvider, MatchmakingProviderError,
+        MatchmakingService, ResolvedGameServer,
     };
     use async_trait::async_trait;
     use std::sync::Mutex;
@@ -150,15 +151,45 @@ mod tests {
         async fn enqueue(
             &self,
             _request: crate::use_cases::MatchmakingQueueRequest,
-        ) -> Result<MatchmakingEnqueueResult, MatchmakingProviderError> {
+        ) -> Result<MatchmakingLifecycleState, MatchmakingProviderError> {
             panic!("matchmaking should not be called");
         }
 
         async fn poll_status(
             &self,
             _ticket_id: String,
-        ) -> Result<crate::use_cases::MatchmakingTicketStatus, MatchmakingProviderError> {
+        ) -> Result<MatchmakingLifecycleState, MatchmakingProviderError> {
             panic!("matchmaking should not be called");
+        }
+
+        async fn cancel(
+            &self,
+            _ticket_id: String,
+        ) -> Result<MatchmakingLifecycleState, MatchmakingProviderError> {
+            panic!("matchmaking should not be called");
+        }
+    }
+
+    #[derive(Default)]
+    struct UnusedGameServerDirectory;
+
+    #[async_trait]
+    impl GameServerDirectory for UnusedGameServerDirectory {
+        async fn resolve(&self, _region: &str) -> Result<ResolvedGameServer, GameServerError> {
+            panic!("game server directory should not be called");
+        }
+    }
+
+    #[derive(Default)]
+    struct UnusedGameServerProvisioner;
+
+    #[async_trait]
+    impl GameServerProvisioner for UnusedGameServerProvisioner {
+        async fn create_lobby(
+            &self,
+            _request: CreateGameLobby,
+        ) -> Result<CreateGameLobbyResult, GameServerError> {
+            panic!("game server provisioner should not be called");
         }
     }
 
@@ -168,6 +199,8 @@ mod tests {
             matchmaking: Arc::new(MatchmakingService::new(
                 Arc::new(MockAuthProvider::default()),
                 Arc::new(UnusedMatchmakingProvider),
+                Arc::new(UnusedGameServerDirectory),
+                Arc::new(UnusedGameServerProvisioner),
             )),
         })
     }

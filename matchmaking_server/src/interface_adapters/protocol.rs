@@ -3,27 +3,30 @@ use serde::{Deserialize, Serialize};
 // Request payload for enqueueing a player into matchmaking.
 #[derive(Debug, Deserialize)]
 pub struct QueueRequest {
-    pub player_id: String,
+    pub player_id: u64,
     pub player_skill: u32,
     pub region: String,
 }
 
-// Response payload returned after attempting to enqueue a player.
+// Response payload returned after queue lifecycle operations.
 #[derive(Debug, Serialize)]
 pub struct QueueResponse {
     pub status: QueueStatus,
-    pub ticket_id: Option<String>,
+    pub ticket_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub match_id: Option<String>,
-    pub opponent_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub player_ids: Option<Vec<u64>>,
     pub region: String,
 }
 
-// Outcome status for the queue response.
+// Outcome status for queue lifecycle responses.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum QueueStatus {
     Waiting,
     Matched,
+    Canceled,
 }
 
 // Simple error envelope for JSON responses.

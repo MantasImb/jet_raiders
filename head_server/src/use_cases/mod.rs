@@ -6,7 +6,9 @@ pub use guest::{
     GuestSessionService, VerifySession, VerifySessionResult,
 };
 pub use matchmaking::{
-    EnterMatchmaking, EnterMatchmakingError, MatchmakingEnqueueResult, MatchmakingProvider,
-    MatchmakingProviderError, MatchmakingQueueRequest, MatchmakingService, MatchmakingTicketStatus,
-    PollMatchmaking, PollMatchmakingError,
+    CancelMatchmaking, CancelMatchmakingError, CreateGameLobby, CreateGameLobbyResult,
+    EnterMatchmaking, EnterMatchmakingError, GameServerDirectory, GameServerError,
+    GameServerProvisioner, HeadMatchmakingResult, MatchmakingLifecycleState, MatchmakingProvider,
+    MatchmakingProviderError, MatchmakingQueueRequest, MatchmakingService, PollMatchmaking,
+    PollMatchmakingError, ResolvedGameServer,
 };

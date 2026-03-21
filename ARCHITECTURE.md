@@ -40,9 +40,9 @@ Status snapshot as of **March 19, 2026**:
 - `auth_server/`, `head_server/`, `game_server/`, and `matchmaking_server/`
   are runnable Rust services.
 - `head_server/` currently exposes guest identity/session HTTP APIs and
-  matchmaking queue-entry and ticket-polling HTTP APIs, routes them through
-  use-case orchestration, and calls `auth_server/` and `matchmaking_server/`
-  through injected ports.
+  matchmaking queue-entry, ticket-polling, and ticket-cancel HTTP APIs, routes
+  them through use-case orchestration, and calls `auth_server/`,
+  `matchmaking_server/`, and `game_server/` through injected ports.
 - `website/` is still in scaffold/placeholder stage.
 - The active Godot project lives in `game_client/`.
 
@@ -109,10 +109,11 @@ game_server/
 2. Head service verifies the `session_token` through auth service and derives
    the canonical player identity.
 3. Head service forwards that canonical identity to matchmaking service.
-4. Client receives either a waiting `ticket_id` or an immediate match result.
-5. Client polls head with `ticket_id` while waiting.
-6. Client connects to game server and joins the assigned lobby after later
-   phases complete handoff.
+4. Client receives either a waiting `ticket_id`, a canceled state, or a final
+   matched response after head has completed lobby handoff.
+5. Client polls or cancels through head with `ticket_id` while waiting.
+6. Client connects to game server and joins the assigned lobby returned by
+   head.
 7. Game server validates identity/session (directly or via auth-backed token
    verification).
 8. Client sends input; server runs simulation ticks and broadcasts snapshots.
@@ -126,11 +127,13 @@ Current implemented head-service entrypoints:
 - `POST /matchmaking/queue`: verifies the submitted `session_token` through
   auth, forwards the canonical player identity to matchmaking, and returns
   `status`, `ticket_id`, and `region` for waiting responses or `status`,
-  `match_id`, `opponent_id`, and `region` for immediate matches.
+  `match_id`, `lobby_id`, `ws_url`, and `region` after successful handoff for
+  matched responses.
 - `GET /matchmaking/queue/{ticket_id}`: proxies ticket polling through head and
-  currently returns `status`, `ticket_id`, and `region` for waiting responses
-  or `status`, `match_id`, `opponent_id`, and `region` for matched responses
-  until the later lobby-handoff phase is implemented.
+  returns waiting, canceled, or game-ready matched responses from the composed
+  matchmaking plus lobby-handoff flow.
+- `DELETE /matchmaking/queue/{ticket_id}`: proxies ticket cancellation through
+  head and returns the resulting lifecycle state for the ticket.
 
 Current guest-flow layering inside `head_server/`:
 

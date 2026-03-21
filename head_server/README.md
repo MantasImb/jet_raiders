@@ -22,9 +22,10 @@ flowchart TD
 ## Purpose
 
 The head service is the HTTP entry point for guest identity/session flows and
-the first matchmaking queue-entry slice used by the game client. It proxies
-guest auth operations to `auth_server` and matchmaking queue entry to
-`matchmaking_server`.
+the client-facing matchmaking lifecycle. It proxies guest auth operations to
+`auth_server`, consumes stable ticket lifecycle state from
+`matchmaking_server`, and completes game-server lobby handoff before returning
+final matched responses.
 
 ## Architecture Guidelines
 
@@ -40,8 +41,11 @@ under `head_server/`.
 - Verify `session_token` through auth before queueing canonical player identity.
 - Orchestrate matchmaking queue entry through a dedicated use-case service.
 - Accept matchmaking polling requests keyed by `ticket_id`.
-- Proxy ticket status lookup to `matchmaking_server` through the same dedicated
-  matchmaking use-case boundary.
+- Accept matchmaking cancellation requests keyed by `ticket_id`.
+- Proxy ticket status lookup and cancellation to `matchmaking_server` through
+  the same dedicated matchmaking use-case boundary.
+- Resolve the target game server by region and create lobbies for matched
+  tickets before returning final client-visible match responses.
 - Call `matchmaking_server` through a dedicated reqwest client port.
 - Return head-level response DTOs suitable for client usage.
 
@@ -115,13 +119,14 @@ Waiting response:
 }
 ```
 
-Immediate match response:
+Game-ready matched response:
 
 ```json
 {
   "status": "matched",
   "match_id": "match-123",
-  "opponent_id": "player-7",
+  "lobby_id": "match-123",
+  "ws_url": "ws://localhost:3001/ws",
   "region": "eu-west"
 }
 ```
@@ -140,16 +145,31 @@ Waiting response:
 }
 ```
 
-Current matched response during phase 2:
+Canceled response:
+
+```json
+{
+  "status": "canceled",
+  "ticket_id": "ticket-123",
+  "region": "eu-west"
+}
+```
+
+Game-ready matched response:
 
 ```json
 {
   "status": "matched",
   "match_id": "match-123",
-  "opponent_id": "player-7",
+  "lobby_id": "match-123",
+  "ws_url": "ws://localhost:3001/ws",
   "region": "eu-west"
 }
 ```
+
+### `DELETE /matchmaking/queue/{ticket_id}`
+
+Cancels a waiting matchmaking ticket through head.
 
 ## Error Behavior
 
@@ -160,12 +180,10 @@ Current matched response during phase 2:
 - Invalid matchmaking requests return `400`.
 - Upstream matchmaking `409` responses return `409`.
 - Unknown `ticket_id` values in `/matchmaking/queue/{ticket_id}` return `404`.
+- Canceling a matched `ticket_id` returns `409`.
 - Matchmaking transport/failure conditions return `502`.
-- The queue-entry flow does not create lobbies yet; matched responses are
-  surfaced directly from the matchmaking service contract for now.
-- The polling flow also does not create lobbies yet in phase 2; a poll that
-  reports `matched` still reflects the upstream matchmaking state rather than a
-  completed game-server handoff.
+- A `matched` response is only returned after head has successfully ensured the
+  target game-server lobby exists.
 
 ## Runtime and Configuration
 
@@ -174,20 +192,27 @@ Current matched response during phase 2:
 - Default auth base URL: `http://localhost:3002`
 - Matchmaking base URL env var: `MATCHMAKING_SERVICE_URL`
 - Default matchmaking base URL: `http://localhost:3003`
+- Game server default base URL env var: `GAME_SERVER_DEFAULT_BASE_URL`
+- Default game server base URL: `http://localhost:3001`
+- Game server default WebSocket URL env var: `GAME_SERVER_DEFAULT_WS_URL`
+- Default game server WebSocket URL: `ws://localhost:3001/ws`
+- Optional regional override env var: `GAME_SERVER_REGION_MAP`
+  - Format: `region=base_url=ws_url;region=base_url=ws_url`
 - Tracing controls: `RUST_LOG`, optional `LOG_FORMAT=json`
 
 ## Dependencies
 
 - `auth_server` for guest identity/session operations.
-- `matchmaking_server` for queue-entry orchestration and ticket polling.
+- `matchmaking_server` for queue lifecycle orchestration.
+- `game_server` for lobby creation before final matched responses are returned.
 
 ## Layer Notes
 
 - `interface_adapters/` owns head HTTP DTOs, request validation, and HTTP error mapping.
 - `use_cases/` owns guest session orchestration, matchmaking queue orchestration,
-  matchmaking ticket polling, and the `AuthProvider` / `MatchmakingProvider`
-  ports.
-- `frameworks/` owns the concrete reqwest auth and matchmaking clients plus runtime wiring.
+  matchmaking ticket polling and cancellation, and the upstream service ports.
+- `frameworks/` owns the concrete reqwest auth, matchmaking, and game-server
+  clients plus runtime wiring.
 - `domain/` is reserved for future head-specific business entities and invariants.
 
 ## Planned (Not Implemented Yet)
@@ -198,5 +223,4 @@ implemented in current routes:
 - web app shell endpoints
 - profile management endpoints
 - party/friends/inventory endpoints
-- matchmaking cancellation endpoints
-- lobby handoff and regional game-server routing
+- durable matchmaking or handoff storage

@@ -1,4 +1,4 @@
-use crate::interface_adapters::handlers::queue::{enqueue, lookup_ticket};
+use crate::interface_adapters::handlers::queue::{cancel_ticket, enqueue, lookup_ticket};
 use crate::interface_adapters::state::AppState;
 use axum::{
     Router,
@@ -10,6 +10,9 @@ use std::sync::Arc;
 pub fn app(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/matchmaking/queue", post(enqueue))
-        .route("/matchmaking/queue/{ticket_id}", get(lookup_ticket))
+        .route(
+            "/matchmaking/queue/{ticket_id}",
+            get(lookup_ticket).delete(cancel_ticket),
+        )
         .with_state(state)
 }

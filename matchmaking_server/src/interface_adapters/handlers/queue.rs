@@ -3,7 +3,7 @@ use crate::interface_adapters::protocol::{
 };
 use crate::interface_adapters::state::AppState;
 use crate::use_cases::matchmaker::{
-    EnqueuePlayer, MatchError, MatchOutcome, TicketLookupError, TicketStatus,
+    CancelTicketError, EnqueuePlayer, TicketLookupError, TicketStatus,
 };
 use axum::{
     Json,
@@ -17,11 +17,11 @@ pub async fn enqueue(
     State(state): State<Arc<AppState>>,
     Json(request): Json<QueueRequest>,
 ) -> Result<Json<QueueResponse>, (StatusCode, Json<ErrorResponse>)> {
-    if request.player_id.trim().is_empty() || request.region.trim().is_empty() {
+    if request.region.trim().is_empty() {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ErrorResponse {
-                message: "player_id and region are required".to_string(),
+                message: "region is required".to_string(),
             }),
         ));
     }
@@ -38,36 +38,7 @@ pub async fn enqueue(
         matchmaker.enqueue(request)
     };
 
-    let response = match outcome {
-        Ok(MatchOutcome::Waiting { ticket_id, region }) => QueueResponse {
-            status: QueueStatus::Waiting,
-            ticket_id: Some(ticket_id),
-            match_id: None,
-            opponent_id: None,
-            region,
-        },
-        Ok(MatchOutcome::Matched {
-            match_id,
-            opponent_id,
-            region,
-        }) => QueueResponse {
-            status: QueueStatus::Matched,
-            ticket_id: None,
-            match_id: Some(match_id),
-            opponent_id: Some(opponent_id),
-            region,
-        },
-        Err(MatchError::AlreadyQueued { player_id }) => {
-            return Err((
-                StatusCode::CONFLICT,
-                Json(ErrorResponse {
-                    message: format!("player_id {} is already queued", player_id),
-                }),
-            ));
-        }
-    };
-
-    Ok(Json(response))
+    Ok(Json(map_ticket_status(outcome)))
 }
 
 // Look up the current state of a previously issued matchmaking ticket.
@@ -89,42 +60,88 @@ pub async fn lookup_ticket(
         matchmaker.lookup_ticket(ticket_id.as_str())
     };
 
-    let response = match outcome {
-        Ok(TicketStatus::Waiting { ticket_id, region }) => QueueResponse {
-            status: QueueStatus::Waiting,
-            ticket_id: Some(ticket_id),
-            match_id: None,
-            opponent_id: None,
-            region,
-        },
-        Ok(TicketStatus::Matched {
-            match_id,
-            opponent_id,
-            region,
-        }) => QueueResponse {
-            status: QueueStatus::Matched,
-            ticket_id: None,
-            match_id: Some(match_id),
-            opponent_id: Some(opponent_id),
-            region,
-        },
-        Err(TicketLookupError::NotFound { ticket_id }) => {
-            return Err((
-                StatusCode::NOT_FOUND,
-                Json(ErrorResponse {
-                    message: format!("ticket_id {ticket_id} was not found"),
-                }),
-            ));
-        }
+    match outcome {
+        Ok(status) => Ok(Json(map_ticket_status(status))),
+        Err(TicketLookupError::NotFound { ticket_id }) => Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                message: format!("ticket_id {ticket_id} was not found"),
+            }),
+        )),
+    }
+}
+
+// Cancel a waiting ticket so it is removed from the active queue.
+pub async fn cancel_ticket(
+    State(state): State<Arc<AppState>>,
+    Path(ticket_id): Path<String>,
+) -> Result<Json<QueueResponse>, (StatusCode, Json<ErrorResponse>)> {
+    if ticket_id.trim().is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                message: "ticket_id is required".to_string(),
+            }),
+        ));
+    }
+
+    let outcome = {
+        let mut matchmaker = state.matchmaker.lock().await;
+        matchmaker.cancel_ticket(ticket_id.as_str())
     };
 
-    Ok(Json(response))
+    match outcome {
+        Ok(status) => Ok(Json(map_ticket_status(status))),
+        Err(CancelTicketError::NotFound { ticket_id }) => Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                message: format!("ticket_id {ticket_id} was not found"),
+            }),
+        )),
+        Err(CancelTicketError::Matched { ticket_id }) => Err((
+            StatusCode::CONFLICT,
+            Json(ErrorResponse {
+                message: format!("ticket_id {ticket_id} is already matched"),
+            }),
+        )),
+    }
+}
+
+fn map_ticket_status(status: TicketStatus) -> QueueResponse {
+    match status {
+        TicketStatus::Waiting { ticket_id, region } => QueueResponse {
+            status: QueueStatus::Waiting,
+            ticket_id,
+            match_id: None,
+            player_ids: None,
+            region,
+        },
+        TicketStatus::Matched {
+            ticket_id,
+            match_id,
+            player_ids,
+            region,
+        } => QueueResponse {
+            status: QueueStatus::Matched,
+            ticket_id,
+            match_id: Some(match_id),
+            player_ids: Some(player_ids),
+            region,
+        },
+        TicketStatus::Canceled { ticket_id, region } => QueueResponse {
+            status: QueueStatus::Canceled,
+            ticket_id,
+            match_id: None,
+            player_ids: None,
+            region,
+        },
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::use_cases::matchmaker::{EnqueuePlayer, Matchmaker};
+    use crate::use_cases::matchmaker::Matchmaker;
     use std::sync::Arc;
     use tokio::sync::Mutex;
 
@@ -135,71 +152,79 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn lookup_ticket_returns_waiting_response_for_queued_ticket() {
-        let mut matchmaker = Matchmaker::new();
-        let queued = matchmaker
-            .enqueue(EnqueuePlayer {
-                player_id: "player-1".into(),
+    async fn enqueue_returns_waiting_response() {
+        let result = enqueue(
+            State(app_state(Matchmaker::new())),
+            Json(QueueRequest {
+                player_id: 1,
                 player_skill: 1200,
                 region: "eu-west".into(),
-            })
-            .expect("enqueue should succeed");
-        let MatchOutcome::Waiting { ticket_id, .. } = queued else {
-            panic!("first player should be queued");
-        };
-
-        let result = lookup_ticket(
-            State(app_state(matchmaker)),
-            Path(ticket_id),
+            }),
         )
         .await
-        .expect("lookup should succeed");
+        .expect("enqueue should succeed");
 
         assert!(matches!(result.0.status, QueueStatus::Waiting));
-        assert!(
-            result
-                .0
-                .ticket_id
-                .as_deref()
-                .is_some_and(|ticket_id| ticket_id.starts_with("ticket-"))
-        );
+        assert!(result.0.ticket_id.starts_with("ticket-"));
         assert_eq!(result.0.match_id, None);
-        assert_eq!(result.0.opponent_id, None);
+        assert_eq!(result.0.player_ids, None);
         assert_eq!(result.0.region, "eu-west");
     }
 
     #[tokio::test]
-    async fn lookup_ticket_returns_matched_response_after_transition() {
+    async fn enqueue_returns_matched_response_with_shared_roster() {
         let mut matchmaker = Matchmaker::new();
-        let queued = matchmaker
-            .enqueue(EnqueuePlayer {
-                player_id: "player-1".into(),
-                player_skill: 1200,
-                region: "eu-west".into(),
-            })
-            .expect("first enqueue should succeed");
-        let MatchOutcome::Waiting { ticket_id, .. } = queued else {
-            panic!("first player should be queued");
+        let first_result = matchmaker.enqueue(EnqueuePlayer {
+            player_id: 1,
+            player_skill: 1200,
+            region: "eu-west".into(),
+        });
+        let first_ticket_id = match first_result {
+            TicketStatus::Waiting { ticket_id, .. } => ticket_id,
+            _ => panic!("first player should be queued"),
         };
-        matchmaker
-            .enqueue(EnqueuePlayer {
-                player_id: "player-2".into(),
+
+        let result = enqueue(
+            State(app_state(matchmaker)),
+            Json(QueueRequest {
+                player_id: 2,
                 player_skill: 1200,
                 region: "eu-west".into(),
-            })
-            .expect("second enqueue should succeed");
-
-        let result = lookup_ticket(
-            State(app_state(matchmaker)),
-            Path(ticket_id),
+            }),
         )
         .await
-        .expect("lookup should succeed");
+        .expect("enqueue should succeed");
 
         assert!(matches!(result.0.status, QueueStatus::Matched));
-        assert_eq!(result.0.ticket_id, None);
+        assert_ne!(result.0.ticket_id, first_ticket_id);
         assert!(result.0.match_id.as_deref().is_some());
-        assert_eq!(result.0.opponent_id.as_deref(), Some("player-2"));
+        assert_eq!(result.0.player_ids, Some(vec![1, 2]));
+        assert_eq!(result.0.region, "eu-west");
+    }
+
+    #[tokio::test]
+    async fn lookup_ticket_returns_canceled_response_for_canceled_ticket() {
+        let mut matchmaker = Matchmaker::new();
+        let queued = matchmaker.enqueue(EnqueuePlayer {
+            player_id: 1,
+            player_skill: 1200,
+            region: "eu-west".into(),
+        });
+        let ticket_id = match queued {
+            TicketStatus::Waiting { ticket_id, .. } => ticket_id,
+            _ => panic!("first player should be queued"),
+        };
+        matchmaker
+            .cancel_ticket(ticket_id.as_str())
+            .expect("cancel should succeed");
+
+        let result = lookup_ticket(State(app_state(matchmaker)), Path(ticket_id))
+            .await
+            .expect("lookup should succeed");
+
+        assert!(matches!(result.0.status, QueueStatus::Canceled));
+        assert_eq!(result.0.match_id, None);
+        assert_eq!(result.0.player_ids, None);
         assert_eq!(result.0.region, "eu-west");
     }
 
@@ -216,6 +241,61 @@ mod tests {
             Err((status, error)) => {
                 assert_eq!(status, StatusCode::NOT_FOUND);
                 assert_eq!(error.0.message, "ticket_id missing-ticket was not found");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn cancel_ticket_returns_canceled_response() {
+        let mut matchmaker = Matchmaker::new();
+        let queued = matchmaker.enqueue(EnqueuePlayer {
+            player_id: 1,
+            player_skill: 1200,
+            region: "eu-west".into(),
+        });
+        let ticket_id = match queued {
+            TicketStatus::Waiting { ticket_id, .. } => ticket_id,
+            _ => panic!("first player should be queued"),
+        };
+
+        let result = cancel_ticket(State(app_state(matchmaker)), Path(ticket_id.clone()))
+            .await
+            .expect("cancel should succeed");
+
+        assert!(matches!(result.0.status, QueueStatus::Canceled));
+        assert_eq!(result.0.ticket_id, ticket_id);
+        assert_eq!(result.0.region, "eu-west");
+    }
+
+    #[tokio::test]
+    async fn cancel_ticket_rejects_matched_tickets() {
+        let mut matchmaker = Matchmaker::new();
+        let queued = matchmaker.enqueue(EnqueuePlayer {
+            player_id: 1,
+            player_skill: 1200,
+            region: "eu-west".into(),
+        });
+        let first_ticket_id = match queued {
+            TicketStatus::Waiting { ticket_id, .. } => ticket_id,
+            _ => panic!("first player should be queued"),
+        };
+        matchmaker.enqueue(EnqueuePlayer {
+            player_id: 2,
+            player_skill: 1200,
+            region: "eu-west".into(),
+        });
+
+        let result =
+            cancel_ticket(State(app_state(matchmaker)), Path(first_ticket_id.clone())).await;
+
+        match result {
+            Ok(_) => panic!("matched ticket cancel should fail"),
+            Err((status, error)) => {
+                assert_eq!(status, StatusCode::CONFLICT);
+                assert_eq!(
+                    error.0.message,
+                    format!("ticket_id {first_ticket_id} is already matched")
+                );
             }
         }
     }
