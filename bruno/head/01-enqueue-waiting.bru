@@ -1,0 +1,39 @@
+meta {
+  name: 01 Enqueue Waiting
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{process.env.HEAD_URL}}/matchmaking/queue
+  body: json
+  auth: none
+}
+
+headers {
+  content-type: application/json
+}
+
+body:json {
+  {
+    "session_token": "{{player_a_session_token}}",
+    "player_skill": 1200,
+    "region": "eu-west"
+  }
+}
+
+tests {
+  test("player A enters queue and gets a waiting ticket", function() {
+    const body = res.getBody();
+
+    expect(res.getStatus()).to.equal(200);
+    expect(body.status).to.equal("waiting");
+    expect(body.ticket_id).to.be.a("string");
+    expect(body.region).to.equal("eu-west");
+    expect(body.match_id).to.equal(undefined);
+    expect(body.lobby_id).to.equal(undefined);
+    expect(body.ws_url).to.equal(undefined);
+
+    bru.setVar("player_a_ticket_id", body.ticket_id);
+  });
+}

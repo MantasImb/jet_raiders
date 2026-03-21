@@ -1,0 +1,38 @@
+meta {
+  name: 05 Reenqueue While Matched Returns Matched
+  type: http
+  seq: 15
+}
+
+post {
+  url: {{process.env.HEAD_URL}}/matchmaking/queue
+  body: json
+  auth: none
+}
+
+headers {
+  content-type: application/json
+}
+
+body:json {
+  {
+    "session_token": "{{player_a_session_token}}",
+    "player_skill": 1200,
+    "region": "eu-west"
+  }
+}
+
+tests {
+  test("re-enqueue returns the existing matched handoff result", function() {
+    const body = res.getBody();
+    const expectedWsUrl = bru.getProcessEnv("EXPECTED_WS_URL");
+
+    expect(res.getStatus()).to.equal(200);
+    expect(body.status).to.equal("matched");
+    expect(body.match_id).to.equal(bru.getVar("match_id"));
+    expect(body.lobby_id).to.equal(bru.getVar("lobby_id"));
+    expect(body.ws_url).to.equal(expectedWsUrl);
+    expect(body.region).to.equal("eu-west");
+    expect(body.ticket_id).to.equal(undefined);
+  });
+}

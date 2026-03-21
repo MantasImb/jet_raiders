@@ -1,0 +1,17 @@
+meta {
+  name: 07 Cancel Matched Ticket Rejected
+  type: http
+  seq: 18
+}
+
+delete {
+  url: {{process.env.HEAD_URL}}/matchmaking/queue/{{player_a_ticket_id}}?session_token={{player_a_session_token}}
+  body: none
+  auth: none
+}
+
+tests {
+  test("matched tickets cannot be canceled", function() {
+    expect(res.getStatus()).to.equal(409);
+  });
+}

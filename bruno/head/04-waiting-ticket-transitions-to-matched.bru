@@ -1,0 +1,26 @@
+meta {
+  name: 04 Waiting Ticket Transitions To Matched
+  type: http
+  seq: 14
+}
+
+get {
+  url: {{process.env.HEAD_URL}}/matchmaking/queue/{{player_a_ticket_id}}?session_token={{player_a_session_token}}
+  body: none
+  auth: none
+}
+
+tests {
+  test("player A polling sees the same final handoff result", function() {
+    const body = res.getBody();
+    const expectedWsUrl = bru.getProcessEnv("EXPECTED_WS_URL");
+
+    expect(res.getStatus()).to.equal(200);
+    expect(body.status).to.equal("matched");
+    expect(body.match_id).to.equal(bru.getVar("match_id"));
+    expect(body.lobby_id).to.equal(bru.getVar("lobby_id"));
+    expect(body.ws_url).to.equal(expectedWsUrl);
+    expect(body.region).to.equal("eu-west");
+    expect(body.ticket_id).to.equal(undefined);
+  });
+}

@@ -1,0 +1,25 @@
+meta {
+  name: 06b Cancel Player C Ticket
+  type: http
+  seq: 17
+}
+
+delete {
+  url: {{process.env.HEAD_URL}}/matchmaking/queue/{{player_c_ticket_id}}?session_token={{player_c_session_token}}
+  body: none
+  auth: none
+}
+
+tests {
+  test("cancel returns the explicit canceled lifecycle state", function() {
+    const body = res.getBody();
+
+    expect(res.getStatus()).to.equal(200);
+    expect(body.status).to.equal("canceled");
+    expect(body.ticket_id).to.equal(bru.getVar("player_c_ticket_id"));
+    expect(body.region).to.equal("us-east");
+    expect(body.match_id).to.equal(undefined);
+    expect(body.lobby_id).to.equal(undefined);
+    expect(body.ws_url).to.equal(undefined);
+  });
+}
