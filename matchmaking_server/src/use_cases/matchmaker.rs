@@ -1,5 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
+use tracing::info;
 
 // Application request for queueing a player into matchmaking.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -125,6 +126,15 @@ impl Matchmaker {
         self.active_ticket_by_player
             .insert(request.player_id, ticket_id.clone());
 
+        // Emit lifecycle telemetry only when the queue state changes.
+        info!(
+            ticket_id = %ticket_id,
+            player_id = request.player_id,
+            player_skill = request.player_skill,
+            region = %request.region,
+            "created waiting matchmaking ticket"
+        );
+
         TicketStatus::Waiting {
             ticket_id,
             region: request.region,
@@ -186,6 +196,12 @@ impl Matchmaker {
                         player_id,
                         region: region.clone(),
                     },
+                );
+                info!(
+                    ticket_id = %ticket_id,
+                    player_id,
+                    region = %region,
+                    "canceled matchmaking ticket"
                 );
 
                 Ok(TicketStatus::Canceled {
@@ -258,8 +274,20 @@ impl Matchmaker {
                 match_id: match_id.clone(),
             },
         );
+
+        // Match formation writes both ticket records and the canonical match
+        // record atomically inside this critical section.
+        info!(
+            match_id = %match_id,
+            ticket_id = %ticket_id,
+            opponent_ticket_id = %opponent_ticket_id,
+            player_ids = ?player_ids,
+            region = %region,
+            "formed matchmaking match"
+        );
+
         self.active_ticket_by_player
-            .insert(opponent_player_id, opponent_ticket_id);
+            .insert(opponent_player_id, opponent_ticket_id.clone());
         self.active_ticket_by_player
             .insert(request.player_id, ticket_id.clone());
 
@@ -516,6 +544,45 @@ mod tests {
             matchmaker.lookup_ticket(1, ticket_id.as_str()),
             Ok(TicketStatus::Canceled {
                 ticket_id,
+                region: "eu-west".into(),
+            })
+        );
+    }
+
+    #[test]
+    fn canceled_waiting_ticket_is_not_matched_by_later_arrivals() {
+        let mut matchmaker = matchmaker();
+        let waiting_outcome = matchmaker.enqueue(queue_request(1, "eu-west"));
+        let first_ticket_id = match waiting_outcome {
+            TicketStatus::Waiting { ticket_id, .. } => ticket_id,
+            _ => panic!("first player should be queued"),
+        };
+
+        assert_eq!(
+            matchmaker.cancel_ticket(1, first_ticket_id.as_str()),
+            Ok(TicketStatus::Canceled {
+                ticket_id: first_ticket_id.clone(),
+                region: "eu-west".into(),
+            })
+        );
+
+        let second_outcome = matchmaker.enqueue(queue_request(2, "eu-west"));
+        let second_ticket_id = match second_outcome {
+            TicketStatus::Waiting { ticket_id, .. } => ticket_id,
+            _ => panic!("a canceled ticket must not be matched by later arrivals"),
+        };
+
+        assert_eq!(
+            matchmaker.lookup_ticket(1, first_ticket_id.as_str()),
+            Ok(TicketStatus::Canceled {
+                ticket_id: first_ticket_id,
+                region: "eu-west".into(),
+            })
+        );
+        assert_eq!(
+            matchmaker.lookup_ticket(2, second_ticket_id.as_str()),
+            Ok(TicketStatus::Waiting {
+                ticket_id: second_ticket_id,
                 region: "eu-west".into(),
             })
         );

@@ -7,7 +7,7 @@ use crate::use_cases::matchmaker::{
 };
 use axum::{
     Json,
-    extract::{Path, Query, State},
+    extract::{Path, Query, State, rejection::QueryRejection},
     http::StatusCode,
 };
 use std::sync::Arc;
@@ -45,7 +45,7 @@ pub async fn enqueue(
 pub async fn lookup_ticket(
     State(state): State<Arc<AppState>>,
     Path(ticket_id): Path<String>,
-    Query(query): Query<TicketOwnerQuery>,
+    query: Result<Query<TicketOwnerQuery>, QueryRejection>,
 ) -> Result<Json<QueueResponse>, (StatusCode, Json<ErrorResponse>)> {
     if ticket_id.trim().is_empty() {
         return Err((
@@ -55,6 +55,18 @@ pub async fn lookup_ticket(
             }),
         ));
     }
+
+    let query = match query {
+        Ok(Query(query)) => query,
+        Err(_) => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    message: "player_id query parameter is required".to_string(),
+                }),
+            ))
+        }
+    };
 
     let outcome = {
         let matchmaker = state.matchmaker.lock().await;
@@ -82,7 +94,7 @@ pub async fn lookup_ticket(
 pub async fn cancel_ticket(
     State(state): State<Arc<AppState>>,
     Path(ticket_id): Path<String>,
-    Query(query): Query<TicketOwnerQuery>,
+    query: Result<Query<TicketOwnerQuery>, QueryRejection>,
 ) -> Result<Json<QueueResponse>, (StatusCode, Json<ErrorResponse>)> {
     if ticket_id.trim().is_empty() {
         return Err((
@@ -92,6 +104,18 @@ pub async fn cancel_ticket(
             }),
         ));
     }
+
+    let query = match query {
+        Ok(Query(query)) => query,
+        Err(_) => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    message: "player_id query parameter is required".to_string(),
+                }),
+            ))
+        }
+    };
 
     let outcome = {
         let mut matchmaker = state.matchmaker.lock().await;
@@ -156,6 +180,7 @@ fn map_ticket_status(status: TicketStatus) -> QueueResponse {
 mod tests {
     use super::*;
     use crate::use_cases::matchmaker::{MatchIdGenerator, Matchmaker};
+    use axum::{extract::rejection::QueryRejection, http::Uri};
     use std::sync::{Arc, Mutex as StdMutex};
     use tokio::sync::Mutex;
 
@@ -186,6 +211,13 @@ mod tests {
         Arc::new(AppState {
             matchmaker: Arc::new(Mutex::new(matchmaker)),
         })
+    }
+
+    fn invalid_owner_query() -> Result<Query<TicketOwnerQuery>, QueryRejection> {
+        let uri: Uri = "/matchmaking/queue/ticket-123?player_id=abc"
+            .parse()
+            .expect("uri should parse");
+        Query::<TicketOwnerQuery>::try_from_uri(&uri)
     }
 
     #[tokio::test]
@@ -258,7 +290,7 @@ mod tests {
         let result = lookup_ticket(
             State(app_state(matchmaker)),
             Path(ticket_id),
-            Query(TicketOwnerQuery { player_id: 1 }),
+            Ok(Query(TicketOwnerQuery { player_id: 1 })),
         )
         .await
         .expect("lookup should succeed");
@@ -274,7 +306,7 @@ mod tests {
         let result = lookup_ticket(
             State(app_state(matchmaker())),
             Path("missing-ticket".to_string()),
-            Query(TicketOwnerQuery { player_id: 1 }),
+            Ok(Query(TicketOwnerQuery { player_id: 1 })),
         )
         .await;
 
@@ -303,7 +335,7 @@ mod tests {
         let result = lookup_ticket(
             State(app_state(matchmaker)),
             Path(ticket_id.clone()),
-            Query(TicketOwnerQuery { player_id: 2 }),
+            Ok(Query(TicketOwnerQuery { player_id: 2 })),
         )
         .await;
 
@@ -315,6 +347,25 @@ mod tests {
                     error.0.message,
                     format!("ticket_id {ticket_id} is not owned by the caller")
                 );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn lookup_ticket_returns_json_bad_request_for_invalid_query() {
+        let state = app_state(matchmaker());
+        let result = lookup_ticket(
+            State(state),
+            Path("ticket-123".to_string()),
+            invalid_owner_query(),
+        )
+        .await;
+
+        match result {
+            Ok(_) => panic!("invalid query should fail"),
+            Err((status, Json(error))) => {
+                assert_eq!(status, StatusCode::BAD_REQUEST);
+                assert_eq!(error.message, "player_id query parameter is required");
             }
         }
     }
@@ -335,7 +386,7 @@ mod tests {
         let result = cancel_ticket(
             State(app_state(matchmaker)),
             Path(ticket_id.clone()),
-            Query(TicketOwnerQuery { player_id: 1 }),
+            Ok(Query(TicketOwnerQuery { player_id: 1 })),
         )
         .await
         .expect("cancel should succeed");
@@ -366,7 +417,7 @@ mod tests {
         let result = cancel_ticket(
             State(app_state(matchmaker)),
             Path(first_ticket_id.clone()),
-            Query(TicketOwnerQuery { player_id: 1 }),
+            Ok(Query(TicketOwnerQuery { player_id: 1 })),
         )
         .await;
 
@@ -378,6 +429,25 @@ mod tests {
                     error.0.message,
                     format!("ticket_id {first_ticket_id} is already matched")
                 );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn cancel_ticket_returns_json_bad_request_for_invalid_query() {
+        let state = app_state(matchmaker());
+        let result = cancel_ticket(
+            State(state),
+            Path("ticket-123".to_string()),
+            invalid_owner_query(),
+        )
+        .await;
+
+        match result {
+            Ok(_) => panic!("invalid query should fail"),
+            Err((status, Json(error))) => {
+                assert_eq!(status, StatusCode::BAD_REQUEST);
+                assert_eq!(error.message, "player_id query parameter is required");
             }
         }
     }

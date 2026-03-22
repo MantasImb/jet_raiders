@@ -2,13 +2,14 @@
 
 ## Summary
 
-The matchmaking service is already runnable and currently provides a minimal
-in-memory queue endpoint:
+The matchmaking service is already runnable and now exposes a ticket-centric
+in-memory lifecycle API through head:
 
 - `POST /matchmaking/queue`
+- `GET /matchmaking/queue/{ticket_id}`
+- `DELETE /matchmaking/queue/{ticket_id}`
 
-This document tracks the current implementation shape and the next incremental
-steps.
+This document tracks the implemented shape and the remaining incremental work.
 
 ## Current Crate Layout (Implemented)
 
@@ -38,13 +39,17 @@ matchmaking_server/
 
 ## Current Behavior (Implemented)
 
-1. Head service (or another caller) sends `POST /matchmaking/queue` with
-   `player_id`, `player_skill`, and `region`.
+1. Head service sends `POST /matchmaking/queue` with `player_id`,
+   `player_skill`, and `region`.
 2. Handler validates required fields.
 3. Matchmaker checks for a waiting player in the same region.
-4. If found, returns `matched` with `match_id` and `opponent_id`.
-5. If not found, stores the player and returns `waiting` with `ticket_id`.
-6. Duplicate enqueue by the same player returns conflict.
+4. If found, it creates a canonical matched record and returns `matched` with
+   `ticket_id`, `match_id`, `player_ids`, and `region`.
+5. If not found, it stores the player and returns `waiting` with `ticket_id`
+   and `region`.
+6. Later `GET /matchmaking/queue/{ticket_id}` returns `waiting`, `matched`, or
+   `canceled`, and `DELETE /matchmaking/queue/{ticket_id}` transitions a
+   waiting ticket to `canceled`.
 
 ## Layer Ownership
 
@@ -57,21 +62,21 @@ matchmaking_server/
 
 - Queue storage is in-memory only.
 - Matching rule is region-only.
-- No queue status/cancel endpoints yet.
-- No auth validation at the matchmaking boundary yet.
+- Head owns auth verification before calling matchmaking.
+- `match_id` is opaque and does not encode roster data.
 
 ## Incremental Delivery Plan
 
-1. Add auth validation middleware or service call for queue requests.
-2. Add status endpoint for ticket polling.
-3. Add cancel endpoint for queue withdrawal.
-4. Add queue expiry/cleanup for stale waiting entries.
-5. Add metrics and richer tracing for queue depth and wait time.
-6. Introduce a persistence adapter (for example Redis) behind a trait boundary.
+1. Add lifecycle logging for ticket creation, match transitions, and
+   cancellation.
+2. Add queue expiry/cleanup for stale waiting entries.
+3. Add metrics and richer tracing for queue depth and wait time.
+4. Introduce a persistence adapter behind a trait boundary if in-memory state
+   becomes an operational limit.
 
 ## Acceptance Criteria for Next Iteration
 
-- Unauthorized queue requests are rejected.
-- Queued players can query status and cancel.
+- Lifecycle events are observable in logs.
 - Stale tickets are cleaned up deterministically.
-- Existing enqueue/match behavior remains compatible for current callers.
+- Existing enqueue, match, poll, and cancel behavior remains compatible for
+  current callers.
