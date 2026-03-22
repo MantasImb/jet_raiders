@@ -171,12 +171,10 @@ mod tests {
             format!("ticket-test-{}-{player_id}", *next_id)
         }
 
-        fn next_match_id(&self, player_id: u64, opponent_id: u64) -> String {
-            let mut ids = [player_id, opponent_id];
-            ids.sort_unstable();
+        fn next_match_id(&self, _player_id: u64, _opponent_id: u64) -> String {
             let mut next_id = self.next_id.lock().expect("lock should not be poisoned");
             *next_id += 1;
-            format!("match-test-{}-{}-{}", *next_id, ids[0], ids[1])
+            format!("match-test-{}", *next_id)
         }
     }
 

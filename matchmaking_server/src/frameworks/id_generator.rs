@@ -15,11 +15,10 @@ impl MatchIdGenerator for SystemMatchIdGenerator {
         )
     }
 
-    fn next_match_id(&self, player_id: u64, opponent_id: u64) -> String {
-        let mut ids = [player_id, opponent_id];
-        ids.sort_unstable();
-
-        format!("match-{}-{}-{}", current_epoch_seconds(), ids[0], ids[1])
+    fn next_match_id(&self, _player_id: u64, _opponent_id: u64) -> String {
+        // Match IDs are opaque external handles; roster membership lives in the
+        // stored match record rather than being encoded into the identifier.
+        format!("match-{}-{}", current_epoch_seconds(), Uuid::new_v4())
     }
 }
 
@@ -41,5 +40,17 @@ mod tests {
         let second = generator.next_ticket_id(1);
 
         assert_ne!(first, second);
+    }
+
+    #[test]
+    fn generated_match_ids_are_opaque_and_distinct() {
+        let generator = SystemMatchIdGenerator;
+        let first = generator.next_match_id(12_345_678_901, 98_765_432_109);
+        let second = generator.next_match_id(12_345_678_901, 98_765_432_109);
+
+        assert_ne!(first, second);
+        assert!(first.starts_with("match-"));
+        assert!(!first.contains("12345678901"));
+        assert!(!first.contains("98765432109"));
     }
 }

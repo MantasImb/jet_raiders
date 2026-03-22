@@ -109,11 +109,14 @@ game_server/
 2. Head service verifies the `session_token` through auth service and derives
    the canonical player identity.
 3. Head service forwards that canonical identity to matchmaking service.
-4. Client receives either a waiting `ticket_id`, a canceled state, or a final
-   matched response after head has completed lobby handoff.
-5. Client polls or cancels through head with `ticket_id` while waiting.
-6. Client connects to game server and joins the assigned lobby returned by
-   head.
+4. Client receives either a waiting `ticket_id` or an immediate matched
+   response after head has completed lobby handoff.
+5. While waiting, the client polls `GET /matchmaking/queue/{ticket_id}` or
+   cancels with `DELETE /matchmaking/queue/{ticket_id}` through head using the
+   issued `ticket_id`; `canceled` is a follow-up state observed through those
+   calls rather than a direct `POST /matchmaking/queue` response.
+6. Client connects to the game server and joins the assigned lobby only after
+   a final matched response is returned.
 7. Game server validates identity/session (directly or via auth-backed token
    verification).
 8. Client sends input; server runs simulation ticks and broadcasts snapshots.
