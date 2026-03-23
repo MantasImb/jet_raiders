@@ -1,13 +1,13 @@
 use crate::interface_adapters::protocol::{
-    ErrorResponse, QueueRequest, QueueResponse, QueueStatus,
+    ErrorResponse, QueueRequest, QueueResponse, QueueStatus, TicketOwnerQuery,
 };
 use crate::interface_adapters::state::AppState;
 use crate::use_cases::matchmaker::{
-    EnqueuePlayer, MatchError, MatchOutcome, TicketLookupError, TicketStatus,
+    CancelTicketError, EnqueuePlayer, TicketLookupError, TicketStatus,
 };
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Path, Query, State, rejection::QueryRejection},
     http::StatusCode,
 };
 use std::sync::Arc;
@@ -17,11 +17,11 @@ pub async fn enqueue(
     State(state): State<Arc<AppState>>,
     Json(request): Json<QueueRequest>,
 ) -> Result<Json<QueueResponse>, (StatusCode, Json<ErrorResponse>)> {
-    if request.player_id.trim().is_empty() || request.region.trim().is_empty() {
+    if request.region.trim().is_empty() {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ErrorResponse {
-                message: "player_id and region are required".to_string(),
+                message: "region is required".to_string(),
             }),
         ));
     }
@@ -38,42 +38,14 @@ pub async fn enqueue(
         matchmaker.enqueue(request)
     };
 
-    let response = match outcome {
-        Ok(MatchOutcome::Waiting { ticket_id, region }) => QueueResponse {
-            status: QueueStatus::Waiting,
-            ticket_id: Some(ticket_id),
-            match_id: None,
-            opponent_id: None,
-            region,
-        },
-        Ok(MatchOutcome::Matched {
-            match_id,
-            opponent_id,
-            region,
-        }) => QueueResponse {
-            status: QueueStatus::Matched,
-            ticket_id: None,
-            match_id: Some(match_id),
-            opponent_id: Some(opponent_id),
-            region,
-        },
-        Err(MatchError::AlreadyQueued { player_id }) => {
-            return Err((
-                StatusCode::CONFLICT,
-                Json(ErrorResponse {
-                    message: format!("player_id {} is already queued", player_id),
-                }),
-            ));
-        }
-    };
-
-    Ok(Json(response))
+    Ok(Json(map_ticket_status(outcome)))
 }
 
 // Look up the current state of a previously issued matchmaking ticket.
 pub async fn lookup_ticket(
     State(state): State<Arc<AppState>>,
     Path(ticket_id): Path<String>,
+    query: Result<Query<TicketOwnerQuery>, QueryRejection>,
 ) -> Result<Json<QueueResponse>, (StatusCode, Json<ErrorResponse>)> {
     if ticket_id.trim().is_empty() {
         return Err((
@@ -84,49 +56,156 @@ pub async fn lookup_ticket(
         ));
     }
 
-    let outcome = {
-        let matchmaker = state.matchmaker.lock().await;
-        matchmaker.lookup_ticket(ticket_id.as_str())
-    };
-
-    let response = match outcome {
-        Ok(TicketStatus::Waiting { ticket_id, region }) => QueueResponse {
-            status: QueueStatus::Waiting,
-            ticket_id: Some(ticket_id),
-            match_id: None,
-            opponent_id: None,
-            region,
-        },
-        Ok(TicketStatus::Matched {
-            match_id,
-            opponent_id,
-            region,
-        }) => QueueResponse {
-            status: QueueStatus::Matched,
-            ticket_id: None,
-            match_id: Some(match_id),
-            opponent_id: Some(opponent_id),
-            region,
-        },
-        Err(TicketLookupError::NotFound { ticket_id }) => {
+    let query = match query {
+        Ok(Query(query)) => query,
+        Err(_) => {
             return Err((
-                StatusCode::NOT_FOUND,
+                StatusCode::BAD_REQUEST,
                 Json(ErrorResponse {
-                    message: format!("ticket_id {ticket_id} was not found"),
+                    message: "player_id query parameter is required".to_string(),
                 }),
-            ));
+            ))
         }
     };
 
-    Ok(Json(response))
+    let outcome = {
+        let matchmaker = state.matchmaker.lock().await;
+        matchmaker.lookup_ticket(query.player_id, ticket_id.as_str())
+    };
+
+    match outcome {
+        Ok(status) => Ok(Json(map_ticket_status(status))),
+        Err(TicketLookupError::Unauthorized { ticket_id }) => Err((
+            StatusCode::UNAUTHORIZED,
+            Json(ErrorResponse {
+                message: format!("ticket_id {ticket_id} is not owned by the caller"),
+            }),
+        )),
+        Err(TicketLookupError::NotFound { ticket_id }) => Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                message: format!("ticket_id {ticket_id} was not found"),
+            }),
+        )),
+    }
+}
+
+// Cancel a waiting ticket so it is removed from the active queue.
+pub async fn cancel_ticket(
+    State(state): State<Arc<AppState>>,
+    Path(ticket_id): Path<String>,
+    query: Result<Query<TicketOwnerQuery>, QueryRejection>,
+) -> Result<Json<QueueResponse>, (StatusCode, Json<ErrorResponse>)> {
+    if ticket_id.trim().is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                message: "ticket_id is required".to_string(),
+            }),
+        ));
+    }
+
+    let query = match query {
+        Ok(Query(query)) => query,
+        Err(_) => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    message: "player_id query parameter is required".to_string(),
+                }),
+            ))
+        }
+    };
+
+    let outcome = {
+        let mut matchmaker = state.matchmaker.lock().await;
+        matchmaker.cancel_ticket(query.player_id, ticket_id.as_str())
+    };
+
+    match outcome {
+        Ok(status) => Ok(Json(map_ticket_status(status))),
+        Err(CancelTicketError::Unauthorized { ticket_id }) => Err((
+            StatusCode::UNAUTHORIZED,
+            Json(ErrorResponse {
+                message: format!("ticket_id {ticket_id} is not owned by the caller"),
+            }),
+        )),
+        Err(CancelTicketError::NotFound { ticket_id }) => Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                message: format!("ticket_id {ticket_id} was not found"),
+            }),
+        )),
+        Err(CancelTicketError::Matched { ticket_id }) => Err((
+            StatusCode::CONFLICT,
+            Json(ErrorResponse {
+                message: format!("ticket_id {ticket_id} is already matched"),
+            }),
+        )),
+    }
+}
+
+fn map_ticket_status(status: TicketStatus) -> QueueResponse {
+    match status {
+        TicketStatus::Waiting { ticket_id, region } => QueueResponse {
+            status: QueueStatus::Waiting,
+            ticket_id,
+            match_id: None,
+            player_ids: None,
+            region,
+        },
+        TicketStatus::Matched {
+            ticket_id,
+            match_id,
+            player_ids,
+            region,
+        } => QueueResponse {
+            status: QueueStatus::Matched,
+            ticket_id,
+            match_id: Some(match_id),
+            player_ids: Some(player_ids),
+            region,
+        },
+        TicketStatus::Canceled { ticket_id, region } => QueueResponse {
+            status: QueueStatus::Canceled,
+            ticket_id,
+            match_id: None,
+            player_ids: None,
+            region,
+        },
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::use_cases::matchmaker::{EnqueuePlayer, Matchmaker};
-    use std::sync::Arc;
+    use crate::use_cases::matchmaker::{MatchIdGenerator, Matchmaker};
+    use axum::{extract::rejection::QueryRejection, http::Uri};
+    use std::sync::{Arc, Mutex as StdMutex};
     use tokio::sync::Mutex;
+
+    #[derive(Debug, Default)]
+    struct TestIdGenerator {
+        next_id: StdMutex<u64>,
+    }
+
+    impl MatchIdGenerator for TestIdGenerator {
+        fn next_ticket_id(&self, player_id: u64) -> String {
+            let mut next_id = self.next_id.lock().expect("lock should not be poisoned");
+            *next_id += 1;
+            format!("ticket-test-{}-{player_id}", *next_id)
+        }
+
+        fn next_match_id(&self, _player_id: u64, _opponent_id: u64) -> String {
+            let mut next_id = self.next_id.lock().expect("lock should not be poisoned");
+            *next_id += 1;
+            format!("match-test-{}", *next_id)
+        }
+    }
+
+    fn matchmaker() -> Matchmaker {
+        Matchmaker::new(Arc::new(TestIdGenerator::default()))
+    }
 
     fn app_state(matchmaker: Matchmaker) -> Arc<AppState> {
         Arc::new(AppState {
@@ -134,80 +213,100 @@ mod tests {
         })
     }
 
+    fn invalid_owner_query() -> Result<Query<TicketOwnerQuery>, QueryRejection> {
+        let uri: Uri = "/matchmaking/queue/ticket-123?player_id=abc"
+            .parse()
+            .expect("uri should parse");
+        Query::<TicketOwnerQuery>::try_from_uri(&uri)
+    }
+
     #[tokio::test]
-    async fn lookup_ticket_returns_waiting_response_for_queued_ticket() {
-        let mut matchmaker = Matchmaker::new();
-        let queued = matchmaker
-            .enqueue(EnqueuePlayer {
-                player_id: "player-1".into(),
+    async fn enqueue_returns_waiting_response() {
+        let result = enqueue(
+            State(app_state(matchmaker())),
+            Json(QueueRequest {
+                player_id: 1,
                 player_skill: 1200,
                 region: "eu-west".into(),
-            })
-            .expect("enqueue should succeed");
-        let MatchOutcome::Waiting { ticket_id, .. } = queued else {
-            panic!("first player should be queued");
-        };
-
-        let result = lookup_ticket(
-            State(app_state(matchmaker)),
-            Path(ticket_id),
+            }),
         )
         .await
-        .expect("lookup should succeed");
+        .expect("enqueue should succeed");
 
         assert!(matches!(result.0.status, QueueStatus::Waiting));
-        assert!(
-            result
-                .0
-                .ticket_id
-                .as_deref()
-                .is_some_and(|ticket_id| ticket_id.starts_with("ticket-"))
-        );
+        assert!(result.0.ticket_id.starts_with("ticket-"));
         assert_eq!(result.0.match_id, None);
-        assert_eq!(result.0.opponent_id, None);
+        assert_eq!(result.0.player_ids, None);
         assert_eq!(result.0.region, "eu-west");
     }
 
     #[tokio::test]
-    async fn lookup_ticket_returns_matched_response_after_transition() {
-        let mut matchmaker = Matchmaker::new();
-        let queued = matchmaker
-            .enqueue(EnqueuePlayer {
-                player_id: "player-1".into(),
+    async fn enqueue_returns_matched_response_with_shared_roster() {
+        let mut matchmaker = matchmaker();
+        let first_result = matchmaker.enqueue(EnqueuePlayer {
+            player_id: 1,
+            player_skill: 1200,
+            region: "eu-west".into(),
+        });
+        let first_ticket_id = match first_result {
+            TicketStatus::Waiting { ticket_id, .. } => ticket_id,
+            _ => panic!("first player should be queued"),
+        };
+
+        let result = enqueue(
+            State(app_state(matchmaker)),
+            Json(QueueRequest {
+                player_id: 2,
                 player_skill: 1200,
                 region: "eu-west".into(),
-            })
-            .expect("first enqueue should succeed");
-        let MatchOutcome::Waiting { ticket_id, .. } = queued else {
-            panic!("first player should be queued");
+            }),
+        )
+        .await
+        .expect("enqueue should succeed");
+
+        assert!(matches!(result.0.status, QueueStatus::Matched));
+        assert_ne!(result.0.ticket_id, first_ticket_id);
+        assert!(result.0.match_id.as_deref().is_some());
+        assert_eq!(result.0.player_ids, Some(vec![1, 2]));
+        assert_eq!(result.0.region, "eu-west");
+    }
+
+    #[tokio::test]
+    async fn lookup_ticket_returns_canceled_response_for_canceled_ticket() {
+        let mut matchmaker = matchmaker();
+        let queued = matchmaker.enqueue(EnqueuePlayer {
+            player_id: 1,
+            player_skill: 1200,
+            region: "eu-west".into(),
+        });
+        let ticket_id = match queued {
+            TicketStatus::Waiting { ticket_id, .. } => ticket_id,
+            _ => panic!("first player should be queued"),
         };
         matchmaker
-            .enqueue(EnqueuePlayer {
-                player_id: "player-2".into(),
-                player_skill: 1200,
-                region: "eu-west".into(),
-            })
-            .expect("second enqueue should succeed");
+            .cancel_ticket(1, ticket_id.as_str())
+            .expect("cancel should succeed");
 
         let result = lookup_ticket(
             State(app_state(matchmaker)),
             Path(ticket_id),
+            Ok(Query(TicketOwnerQuery { player_id: 1 })),
         )
         .await
         .expect("lookup should succeed");
 
-        assert!(matches!(result.0.status, QueueStatus::Matched));
-        assert_eq!(result.0.ticket_id, None);
-        assert!(result.0.match_id.as_deref().is_some());
-        assert_eq!(result.0.opponent_id.as_deref(), Some("player-2"));
+        assert!(matches!(result.0.status, QueueStatus::Canceled));
+        assert_eq!(result.0.match_id, None);
+        assert_eq!(result.0.player_ids, None);
         assert_eq!(result.0.region, "eu-west");
     }
 
     #[tokio::test]
     async fn lookup_ticket_returns_not_found_for_unknown_ticket() {
         let result = lookup_ticket(
-            State(app_state(Matchmaker::new())),
+            State(app_state(matchmaker())),
             Path("missing-ticket".to_string()),
+            Ok(Query(TicketOwnerQuery { player_id: 1 })),
         )
         .await;
 
@@ -216,6 +315,139 @@ mod tests {
             Err((status, error)) => {
                 assert_eq!(status, StatusCode::NOT_FOUND);
                 assert_eq!(error.0.message, "ticket_id missing-ticket was not found");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn lookup_ticket_rejects_non_owner() {
+        let mut matchmaker = matchmaker();
+        let queued = matchmaker.enqueue(EnqueuePlayer {
+            player_id: 1,
+            player_skill: 1200,
+            region: "eu-west".into(),
+        });
+        let ticket_id = match queued {
+            TicketStatus::Waiting { ticket_id, .. } => ticket_id,
+            _ => panic!("first player should be queued"),
+        };
+
+        let result = lookup_ticket(
+            State(app_state(matchmaker)),
+            Path(ticket_id.clone()),
+            Ok(Query(TicketOwnerQuery { player_id: 2 })),
+        )
+        .await;
+
+        match result {
+            Ok(_) => panic!("non-owner lookup should fail"),
+            Err((status, error)) => {
+                assert_eq!(status, StatusCode::UNAUTHORIZED);
+                assert_eq!(
+                    error.0.message,
+                    format!("ticket_id {ticket_id} is not owned by the caller")
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn lookup_ticket_returns_json_bad_request_for_invalid_query() {
+        let state = app_state(matchmaker());
+        let result = lookup_ticket(
+            State(state),
+            Path("ticket-123".to_string()),
+            invalid_owner_query(),
+        )
+        .await;
+
+        match result {
+            Ok(_) => panic!("invalid query should fail"),
+            Err((status, Json(error))) => {
+                assert_eq!(status, StatusCode::BAD_REQUEST);
+                assert_eq!(error.message, "player_id query parameter is required");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn cancel_ticket_returns_canceled_response() {
+        let mut matchmaker = matchmaker();
+        let queued = matchmaker.enqueue(EnqueuePlayer {
+            player_id: 1,
+            player_skill: 1200,
+            region: "eu-west".into(),
+        });
+        let ticket_id = match queued {
+            TicketStatus::Waiting { ticket_id, .. } => ticket_id,
+            _ => panic!("first player should be queued"),
+        };
+
+        let result = cancel_ticket(
+            State(app_state(matchmaker)),
+            Path(ticket_id.clone()),
+            Ok(Query(TicketOwnerQuery { player_id: 1 })),
+        )
+        .await
+        .expect("cancel should succeed");
+
+        assert!(matches!(result.0.status, QueueStatus::Canceled));
+        assert_eq!(result.0.ticket_id, ticket_id);
+        assert_eq!(result.0.region, "eu-west");
+    }
+
+    #[tokio::test]
+    async fn cancel_ticket_rejects_matched_tickets() {
+        let mut matchmaker = matchmaker();
+        let queued = matchmaker.enqueue(EnqueuePlayer {
+            player_id: 1,
+            player_skill: 1200,
+            region: "eu-west".into(),
+        });
+        let first_ticket_id = match queued {
+            TicketStatus::Waiting { ticket_id, .. } => ticket_id,
+            _ => panic!("first player should be queued"),
+        };
+        matchmaker.enqueue(EnqueuePlayer {
+            player_id: 2,
+            player_skill: 1200,
+            region: "eu-west".into(),
+        });
+
+        let result = cancel_ticket(
+            State(app_state(matchmaker)),
+            Path(first_ticket_id.clone()),
+            Ok(Query(TicketOwnerQuery { player_id: 1 })),
+        )
+        .await;
+
+        match result {
+            Ok(_) => panic!("matched ticket cancel should fail"),
+            Err((status, error)) => {
+                assert_eq!(status, StatusCode::CONFLICT);
+                assert_eq!(
+                    error.0.message,
+                    format!("ticket_id {first_ticket_id} is already matched")
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn cancel_ticket_returns_json_bad_request_for_invalid_query() {
+        let state = app_state(matchmaker());
+        let result = cancel_ticket(
+            State(state),
+            Path("ticket-123".to_string()),
+            invalid_owner_query(),
+        )
+        .await;
+
+        match result {
+            Ok(_) => panic!("invalid query should fail"),
+            Err((status, Json(error))) => {
+                assert_eq!(status, StatusCode::BAD_REQUEST);
+                assert_eq!(error.message, "player_id query parameter is required");
             }
         }
     }

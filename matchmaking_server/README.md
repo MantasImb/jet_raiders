@@ -3,7 +3,7 @@
 ## Purpose
 
 The matchmaking service groups players into matches based on simple queue rules
-and returns match results to the head service.
+and owns the authoritative ticket lifecycle consumed by the head service.
 
 ## Architecture Guidelines
 
@@ -13,8 +13,8 @@ Follow `CLEAN_ARCHITECTURE_GUIDELINES.md` for layering and dependency rules.
 
 - Accept matchmaking requests from clients via the head service.
 - Group players based on simple queue rules (region-only today).
-- Return either an immediate queue result or the current status of an issued
-  ticket.
+- Return stable lifecycle state for issued tickets, including waiting,
+  matched, and canceled outcomes.
 
 ## Queue Flow (Player -> Match -> Head Service)
 
@@ -29,20 +29,26 @@ leaving room for additional matchmaking rules later.
 3. **Queue evaluation**: The matchmaker looks for a waiting player in the same
    region. Matching rules are intentionally minimal for now (region only).
 4. **Match found**:
-    - The waiting player is removed from the queue.
+    - The waiting player is removed from the active queue.
     - A `match_id` is created for the two players.
-    - The service responds immediately with `status: matched` plus the opponent
-      and match identifiers.
+    - Both players receive their own stable `ticket_id`.
+    - Both tickets resolve to the same stored matched payload.
 5. **No match yet**:
-    - The player is stored in the in-memory queue.
+    - The player is stored in the in-memory queue as a waiting ticket.
     - A `ticket_id` is issued so the head service can track the request.
     - The service responds with `status: waiting`.
 6. **Polling**:
-    - The head service can later call `GET /matchmaking/queue/{ticket_id}`.
+    - The head service can later call
+      `GET /matchmaking/queue/{ticket_id}?player_id=<owner_id>`.
     - A queued ticket returns `status: waiting` plus the same `ticket_id`.
-    - A matched waiting ticket returns `status: matched` plus the match data
-      created when the opponent arrived.
-7. **Head service response**: The head service receives the response and either
+    - A matched ticket returns `status: matched` plus the stable
+      `ticket_id`, `match_id`, `player_ids`, and `region` payload.
+7. **Cancellation**:
+    - The head service can call
+      `DELETE /matchmaking/queue/{ticket_id}?player_id=<owner_id>`.
+    - Waiting tickets transition to `status: canceled`.
+    - Matched tickets reject cancellation with `409`.
+8. **Head service response**: The head service receives the response and either
    notifies the client immediately (matched) or keeps the client polling until
    later orchestration phases complete the final handoff.
 
@@ -55,31 +61,42 @@ leaving room for additional matchmaking rules later.
   - Returns a queue ticket or match assignment.
 - `GET /matchmaking/queue/{ticket_id}`
   - Looks up the current status of an issued queue ticket.
-  - Returns the waiting or matched state for that ticket.
+  - Requires the owning `player_id` as a query parameter for head-scoped
+    authorization.
+  - Returns the waiting, matched, or canceled state for that ticket.
+- `DELETE /matchmaking/queue/{ticket_id}`
+  - Cancels a waiting queue ticket.
+  - Requires the owning `player_id` as a query parameter for head-scoped
+    authorization.
+  - Returns the canceled state for that ticket.
 
 ## Data Contracts
 
 ### Queue Request
 
-- `player_id`: player identifier supplied by the head service.
+- `player_id`: numeric player identifier supplied by the head service.
 - `player_skill`: matchmaking rating or tier.
 - `region`: preferred region.
 
 ### Queue Response
 
-- `status`: `waiting` or `matched`.
-- `ticket_id`: queue ticket identifier when waiting.
+- `status`: `waiting`, `matched`, or `canceled`.
+- `ticket_id`: queue ticket identifier for all lifecycle responses.
 - `match_id`: match identifier when matched.
-- `opponent_id`: opponent player identifier when matched.
+- `player_ids`: full matched roster when matched.
 - `region`: the region used for matchmaking.
 
-### Ticket Lookup Errors
+### Ticket Errors
 
 - Unknown `ticket_id` values return `404`.
+- Owner mismatches for lookup or cancel return `401`.
+- Canceling a matched `ticket_id` returns `409`.
 
 ## Security Considerations
 
 - Authenticate requests at the head service before calling matchmaking.
+- Head forwards the canonical owning `player_id` on lookup and cancel so the
+  service can reject cross-user ticket access.
 - Avoid leaking internal server addresses to unauthenticated clients.
 
 ## Dependencies
@@ -89,4 +106,4 @@ leaving room for additional matchmaking rules later.
 
 ## Observability
 
-- Log queue activity and match assignments with correlation IDs.
+- Log ticket creation, match transitions, and cancellation with correlation IDs.

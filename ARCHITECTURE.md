@@ -40,9 +40,9 @@ Status snapshot as of **March 19, 2026**:
 - `auth_server/`, `head_server/`, `game_server/`, and `matchmaking_server/`
   are runnable Rust services.
 - `head_server/` currently exposes guest identity/session HTTP APIs and
-  matchmaking queue-entry and ticket-polling HTTP APIs, routes them through
-  use-case orchestration, and calls `auth_server/` and `matchmaking_server/`
-  through injected ports.
+  matchmaking queue-entry, ticket-polling, and ticket-cancel HTTP APIs, routes
+  them through use-case orchestration, and calls `auth_server/`,
+  `matchmaking_server/`, and `game_server/` through injected ports.
 - `website/` is still in scaffold/placeholder stage.
 - The active Godot project lives in `game_client/`.
 
@@ -109,10 +109,14 @@ game_server/
 2. Head service verifies the `session_token` through auth service and derives
    the canonical player identity.
 3. Head service forwards that canonical identity to matchmaking service.
-4. Client receives either a waiting `ticket_id` or an immediate match result.
-5. Client polls head with `ticket_id` while waiting.
-6. Client connects to game server and joins the assigned lobby after later
-   phases complete handoff.
+4. Client receives either a waiting `ticket_id` or an immediate matched
+   response after head has completed lobby handoff.
+5. While waiting, the client polls `GET /matchmaking/queue/{ticket_id}` or
+   cancels with `DELETE /matchmaking/queue/{ticket_id}` through head using the
+   issued `ticket_id`; `canceled` is a follow-up state observed through those
+   calls rather than a direct `POST /matchmaking/queue` response.
+6. Client connects to the game server and joins the assigned lobby only after
+   a final matched response is returned.
 7. Game server validates identity/session (directly or via auth-backed token
    verification).
 8. Client sends input; server runs simulation ticks and broadcasts snapshots.
@@ -126,11 +130,15 @@ Current implemented head-service entrypoints:
 - `POST /matchmaking/queue`: verifies the submitted `session_token` through
   auth, forwards the canonical player identity to matchmaking, and returns
   `status`, `ticket_id`, and `region` for waiting responses or `status`,
-  `match_id`, `opponent_id`, and `region` for immediate matches.
+  `match_id`, `lobby_id`, `ws_url`, and `region` after successful handoff for
+  matched responses.
 - `GET /matchmaking/queue/{ticket_id}`: proxies ticket polling through head and
-  currently returns `status`, `ticket_id`, and `region` for waiting responses
-  or `status`, `match_id`, `opponent_id`, and `region` for matched responses
-  until the later lobby-handoff phase is implemented.
+  returns waiting, canceled, or game-ready matched responses from the composed
+  matchmaking plus lobby-handoff flow. The client authenticates this route with
+  `Authorization: Bearer <session_token>`.
+- `DELETE /matchmaking/queue/{ticket_id}`: proxies ticket cancellation through
+  head and returns the resulting lifecycle state for the ticket. The client
+  authenticates this route with `Authorization: Bearer <session_token>`.
 
 Current guest-flow layering inside `head_server/`:
 
@@ -138,13 +146,19 @@ Current guest-flow layering inside `head_server/`:
   responses.
 - `use_cases/guest.rs`: owns guest init/login orchestration and the auth port.
 - `interface_adapters/handlers/matchmaking.rs`: verifies matchmaking
-  requests, maps queue and poll responses, and forwards canonical identity or
-  ticket lookups to the matchmaking use case.
-- `use_cases/matchmaking.rs`: owns matchmaking queue-entry and ticket-polling
-  orchestration and the matchmaking port.
+  requests, extracts bearer auth for poll/cancel, maps lifecycle responses,
+  and forwards canonical identity or ticket operations to the matchmaking use
+  case.
+- `use_cases/matchmaking.rs`: owns matchmaking queue-entry, ticket-polling,
+  ticket-cancel, and game-server handoff orchestration plus the external
+  service ports.
 - `frameworks/auth_client.rs`: implements the auth port with reqwest.
 - `frameworks/matchmaking_client.rs`: implements the matchmaking port with
   reqwest.
+- `frameworks/game_server_client.rs`: implements the game-server lobby
+  provisioner port with reqwest.
+- `frameworks/game_server_directory.rs`: implements region-to-server resolution
+  for handoff.
 
 ## 8. Protocol and Tick Model (Planned Interface)
 

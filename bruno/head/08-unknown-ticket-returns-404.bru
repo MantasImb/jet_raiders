@@ -1,0 +1,21 @@
+meta {
+  name: 08 Unknown Ticket Returns 404
+  type: http
+  seq: 19
+}
+
+get {
+  url: {{process.env.HEAD_URL}}/matchmaking/queue/{{process.env.UNKNOWN_TICKET_ID}}
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{player_a_session_token}}
+}
+
+tests {
+  test("unknown tickets return not found", function() {
+    expect(res.getStatus()).to.equal(404);
+  });
+}

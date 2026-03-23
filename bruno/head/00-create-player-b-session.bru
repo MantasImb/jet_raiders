@@ -1,0 +1,34 @@
+meta {
+  name: 00 Create Player B Session
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{process.env.HEAD_URL}}/guest/init
+  body: json
+  auth: none
+}
+
+headers {
+  content-type: application/json
+}
+
+body:json {
+  {
+    "display_name": "Bruno_Player_B"
+  }
+}
+
+tests {
+  test("creates player B guest session", function() {
+    const body = res.getBody();
+
+    expect(res.getStatus()).to.equal(200);
+    expect(body.guest_id).to.be.a("string");
+    expect(body.session_token).to.be.a("string");
+
+    bru.setVar("player_b_guest_id", body.guest_id);
+    bru.setVar("player_b_session_token", body.session_token);
+  });
+}

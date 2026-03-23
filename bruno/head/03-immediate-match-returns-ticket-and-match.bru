@@ -1,0 +1,41 @@
+meta {
+  name: 03 Immediate Match Returns Ticket And Match
+  type: http
+  seq: 13
+}
+
+post {
+  url: {{process.env.HEAD_URL}}/matchmaking/queue
+  body: json
+  auth: none
+}
+
+headers {
+  content-type: application/json
+}
+
+body:json {
+  {
+    "session_token": "{{player_b_session_token}}",
+    "player_skill": 1200,
+    "region": "eu-west"
+  }
+}
+
+tests {
+  test("player B gets a game-ready matched response", function() {
+    const body = res.getBody();
+    const expectedWsUrl = bru.getProcessEnv("EXPECTED_WS_URL");
+
+    expect(res.getStatus()).to.equal(200);
+    expect(body.status).to.equal("matched");
+    expect(body.match_id).to.be.a("string");
+    expect(body.lobby_id).to.equal(body.match_id);
+    expect(body.ws_url).to.equal(expectedWsUrl);
+    expect(body.region).to.equal("eu-west");
+    expect(body.ticket_id).to.equal(undefined);
+
+    bru.setVar("match_id", body.match_id);
+    bru.setVar("lobby_id", body.lobby_id);
+  });
+}

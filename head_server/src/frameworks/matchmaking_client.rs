@@ -1,6 +1,6 @@
 use crate::use_cases::{
-    MatchmakingEnqueueResult, MatchmakingProvider, MatchmakingProviderError,
-    MatchmakingQueueRequest, MatchmakingTicketStatus,
+    MatchmakingLifecycleState, MatchmakingProvider, MatchmakingProviderError,
+    MatchmakingQueueRequest,
 };
 use async_trait::async_trait;
 use reqwest::{Client, Response, StatusCode, Url};
@@ -29,7 +29,7 @@ impl std::error::Error for MatchmakingClientConfigError {}
 
 #[derive(Debug, Serialize)]
 struct MatchmakingQueueHttpRequest {
-    player_id: String,
+    player_id: u64,
     player_skill: u32,
     region: String,
 }
@@ -37,9 +37,9 @@ struct MatchmakingQueueHttpRequest {
 #[derive(Debug, Deserialize)]
 struct MatchmakingHttpResponse {
     status: MatchmakingHttpStatus,
-    ticket_id: Option<String>,
+    ticket_id: String,
     match_id: Option<String>,
-    opponent_id: Option<String>,
+    player_ids: Option<Vec<u64>>,
     region: String,
 }
 
@@ -48,6 +48,7 @@ struct MatchmakingHttpResponse {
 enum MatchmakingHttpStatus {
     Waiting,
     Matched,
+    Canceled,
 }
 
 impl MatchmakingClient {
@@ -83,7 +84,7 @@ impl MatchmakingProvider for MatchmakingClient {
     async fn enqueue(
         &self,
         request: MatchmakingQueueRequest,
-    ) -> Result<MatchmakingEnqueueResult, MatchmakingProviderError> {
+    ) -> Result<MatchmakingLifecycleState, MatchmakingProviderError> {
         let url = self.endpoint("matchmaking/queue")?;
         let response = self
             .http
@@ -96,67 +97,75 @@ impl MatchmakingProvider for MatchmakingClient {
             .send()
             .await
             .map_err(|_| MatchmakingProviderError::UpstreamUnavailable)?;
-        let response = ensure_success_response(response).await?;
 
-        let payload = response
-            .json::<MatchmakingHttpResponse>()
-            .await
-            .map_err(|_| MatchmakingProviderError::Unexpected)?;
-
-        match payload.status {
-            MatchmakingHttpStatus::Waiting => Ok(MatchmakingEnqueueResult::Waiting {
-                ticket_id: payload
-                    .ticket_id
-                    .ok_or(MatchmakingProviderError::Unexpected)?,
-                region: payload.region,
-            }),
-            MatchmakingHttpStatus::Matched => Ok(MatchmakingEnqueueResult::Matched {
-                match_id: payload
-                    .match_id
-                    .ok_or(MatchmakingProviderError::Unexpected)?,
-                opponent_id: payload
-                    .opponent_id
-                    .ok_or(MatchmakingProviderError::Unexpected)?,
-                region: payload.region,
-            }),
-        }
+        parse_lifecycle_response(response).await
     }
 
     async fn poll_status(
         &self,
+        player_id: u64,
         ticket_id: String,
-    ) -> Result<MatchmakingTicketStatus, MatchmakingProviderError> {
-        let url = self.endpoint(&format!("matchmaking/queue/{ticket_id}"))?;
+    ) -> Result<MatchmakingLifecycleState, MatchmakingProviderError> {
+        let url = self.endpoint(&format!(
+            "matchmaking/queue/{ticket_id}?player_id={player_id}"
+        ))?;
         let response = self
             .http
             .get(url)
             .send()
             .await
             .map_err(|_| MatchmakingProviderError::UpstreamUnavailable)?;
-        let response = ensure_success_response(response).await?;
 
-        let payload = response
-            .json::<MatchmakingHttpResponse>()
+        parse_lifecycle_response(response).await
+    }
+
+    async fn cancel(
+        &self,
+        player_id: u64,
+        ticket_id: String,
+    ) -> Result<MatchmakingLifecycleState, MatchmakingProviderError> {
+        let url = self.endpoint(&format!(
+            "matchmaking/queue/{ticket_id}?player_id={player_id}"
+        ))?;
+        let response = self
+            .http
+            .delete(url)
+            .send()
             .await
-            .map_err(|_| MatchmakingProviderError::Unexpected)?;
+            .map_err(|_| MatchmakingProviderError::UpstreamUnavailable)?;
 
-        match payload.status {
-            MatchmakingHttpStatus::Waiting => Ok(MatchmakingTicketStatus::Waiting {
-                ticket_id: payload
-                    .ticket_id
-                    .ok_or(MatchmakingProviderError::Unexpected)?,
-                region: payload.region,
-            }),
-            MatchmakingHttpStatus::Matched => Ok(MatchmakingTicketStatus::Matched {
-                match_id: payload
-                    .match_id
-                    .ok_or(MatchmakingProviderError::Unexpected)?,
-                opponent_id: payload
-                    .opponent_id
-                    .ok_or(MatchmakingProviderError::Unexpected)?,
-                region: payload.region,
-            }),
-        }
+        parse_lifecycle_response(response).await
+    }
+}
+
+async fn parse_lifecycle_response(
+    response: Response,
+) -> Result<MatchmakingLifecycleState, MatchmakingProviderError> {
+    let response = ensure_success_response(response).await?;
+    let payload = response
+        .json::<MatchmakingHttpResponse>()
+        .await
+        .map_err(|_| MatchmakingProviderError::Unexpected)?;
+
+    match payload.status {
+        MatchmakingHttpStatus::Waiting => Ok(MatchmakingLifecycleState::Waiting {
+            ticket_id: payload.ticket_id,
+            region: payload.region,
+        }),
+        MatchmakingHttpStatus::Matched => Ok(MatchmakingLifecycleState::Matched {
+            ticket_id: payload.ticket_id,
+            match_id: payload
+                .match_id
+                .ok_or(MatchmakingProviderError::Unexpected)?,
+            player_ids: payload
+                .player_ids
+                .ok_or(MatchmakingProviderError::Unexpected)?,
+            region: payload.region,
+        }),
+        MatchmakingHttpStatus::Canceled => Ok(MatchmakingLifecycleState::Canceled {
+            ticket_id: payload.ticket_id,
+            region: payload.region,
+        }),
     }
 }
 
@@ -173,6 +182,7 @@ async fn ensure_success_response(response: Response) -> Result<Response, Matchma
 
 fn map_status_to_error(status: StatusCode) -> MatchmakingProviderError {
     match status {
+        StatusCode::UNAUTHORIZED => MatchmakingProviderError::Unauthorized,
         StatusCode::BAD_REQUEST => MatchmakingProviderError::BadRequest,
         StatusCode::CONFLICT => MatchmakingProviderError::Conflict,
         StatusCode::NOT_FOUND => MatchmakingProviderError::NotFound,
@@ -188,7 +198,7 @@ mod tests {
         Json, Router,
         extract::State,
         http::StatusCode as AxumStatusCode,
-        routing::{get, post},
+        routing::{delete, get, post},
     };
     use serde_json::json;
     use std::sync::{Arc, Mutex};
@@ -206,7 +216,7 @@ mod tests {
         log.paths
             .lock()
             .expect("lock should not be poisoned")
-            .push(request.uri().path().to_string());
+            .push(request.uri().to_string());
 
         (
             AxumStatusCode::OK,
@@ -214,7 +224,7 @@ mod tests {
                 "status": "waiting",
                 "ticket_id": "ticket-123",
                 "match_id": null,
-                "opponent_id": null,
+                "player_ids": null,
                 "region": "eu-west"
             })),
         )
@@ -278,7 +288,7 @@ mod tests {
 
         let result = client
             .enqueue(MatchmakingQueueRequest {
-                player_id: "player-1".into(),
+                player_id: 1,
                 player_skill: 1200,
                 region: "eu-west".into(),
             })
@@ -287,7 +297,7 @@ mod tests {
 
         assert_eq!(
             result,
-            MatchmakingEnqueueResult::Waiting {
+            MatchmakingLifecycleState::Waiting {
                 ticket_id: "ticket-123".into(),
                 region: "eu-west".into(),
             }
@@ -315,13 +325,13 @@ mod tests {
             MatchmakingClient::new(&format!("{base_url}/prefix")).expect("client should build");
 
         let result = client
-            .poll_status("ticket-123".into())
+            .poll_status(42, "ticket-123".into())
             .await
             .expect("request should succeed");
 
         assert_eq!(
             result,
-            MatchmakingTicketStatus::Waiting {
+            MatchmakingLifecycleState::Waiting {
                 ticket_id: "ticket-123".into(),
                 region: "eu-west".into(),
             }
@@ -331,7 +341,41 @@ mod tests {
                 .lock()
                 .expect("lock should not be poisoned")
                 .as_slice(),
-            &["/prefix/matchmaking/queue/ticket-123".to_string()]
+            &["/prefix/matchmaking/queue/ticket-123?player_id=42".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn cancel_joins_against_base_path_prefix() {
+        let log = RequestLog::default();
+        let router = Router::new()
+            .route(
+                "/prefix/matchmaking/queue/ticket-123",
+                delete(capture_request_path),
+            )
+            .with_state(log.clone());
+        let base_url = spawn_test_server(router).await;
+        let client =
+            MatchmakingClient::new(&format!("{base_url}/prefix")).expect("client should build");
+
+        let result = client
+            .cancel(42, "ticket-123".into())
+            .await
+            .expect("request should succeed");
+
+        assert_eq!(
+            result,
+            MatchmakingLifecycleState::Waiting {
+                ticket_id: "ticket-123".into(),
+                region: "eu-west".into(),
+            }
+        );
+        assert_eq!(
+            log.paths
+                .lock()
+                .expect("lock should not be poisoned")
+                .as_slice(),
+            &["/prefix/matchmaking/queue/ticket-123?player_id=42".to_string()]
         );
     }
 
