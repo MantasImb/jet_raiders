@@ -124,6 +124,7 @@ Game-ready matched response:
 ```json
 {
   "status": "matched",
+  "ticket_id": "ticket-123",
   "match_id": "match-123",
   "lobby_id": "match-123",
   "ws_url": "ws://localhost:3001/ws",
@@ -166,6 +167,7 @@ Game-ready matched response:
 ```json
 {
   "status": "matched",
+  "ticket_id": "ticket-123",
   "match_id": "match-123",
   "lobby_id": "match-123",
   "ws_url": "ws://localhost:3001/ws",

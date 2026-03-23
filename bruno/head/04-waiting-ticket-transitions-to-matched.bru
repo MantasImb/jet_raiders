@@ -25,6 +25,6 @@ tests {
     expect(body.lobby_id).to.equal(bru.getVar("lobby_id"));
     expect(body.ws_url).to.equal(expectedWsUrl);
     expect(body.region).to.equal("eu-west");
-    expect(body.ticket_id).to.equal(undefined);
+    expect(body.ticket_id).to.equal(bru.getVar("player_a_ticket_id"));
   });
 }

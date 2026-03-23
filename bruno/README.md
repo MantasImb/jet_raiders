@@ -33,4 +33,6 @@ matchmaking, or game-server dependencies.
 - `08-unknown-ticket-returns-404.bru`
 
 The current collection also includes setup requests for three guest sessions
-and a follow-up cancel request for the waiting-ticket flow.
+and a follow-up cancel request for the waiting-ticket flow. The matched-flow
+requests assert that head returns `ticket_id` together with `match_id`,
+`lobby_id`, `ws_url`, and `region`.
