@@ -149,24 +149,24 @@ matched payload is stable and ticket-centric: `ticket_id`, `match_id`,
 
 ### Acceptance criteria
 
-- [ ] Head can create a lobby on the current default game server when enqueue
+- [x] Head can create a lobby on the current default game server when enqueue
       or poll returns a matched lifecycle result.
-- [ ] Head returns a matched response only after lobby creation succeeds.
-- [ ] The matched response includes `ticket_id`, `match_id`, `lobby_id`,
+- [x] Head returns a matched response only after lobby creation succeeds.
+- [x] The matched response includes `ticket_id`, `match_id`, `lobby_id`,
       `ws_url`, and `region`.
-- [ ] Head uses the upstream `player_ids` roster as the authoritative
+- [x] Head uses the upstream `player_ids` roster as the authoritative
       `allowed_player_ids` input when creating the game-server lobby.
-- [ ] Head derives `lobby_id` from `match_id` and treats duplicate lobby create
+- [x] Head derives `lobby_id` from `match_id` and treats duplicate lobby create
       outcomes as retry-safe handoff success for the same match.
-- [ ] Game-server `409 already exists` is treated as a successful handoff for
+- [x] Game-server `409 already exists` is treated as a successful handoff for
       the requested `lobby_id`.
-- [ ] Lobby-creation failure is surfaced as a failed handoff rather than a
+- [x] Lobby-creation failure is surfaced as a failed handoff rather than a
       false-success matched response, and repeated matched requests continue to
       retry until handoff succeeds.
-- [ ] Rust unit tests cover first-create and duplicate-create handoff behavior.
-- [ ] Bruno/process-compose coverage exists for the real head-to-game-server
+- [x] Rust unit tests cover first-create and duplicate-create handoff behavior.
+- [x] Bruno/process-compose coverage exists for the real head-to-game-server
       lobby creation path.
-- [ ] Two-player happy-path behavior is demoable end-to-end through head.
+- [x] Two-player happy-path behavior is demoable end-to-end through head.
 
 ---
 

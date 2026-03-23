@@ -107,13 +107,14 @@ fn map_head_result(result: HeadMatchmakingResult) -> HeadMatchmakingResponse {
             region,
         },
         HeadMatchmakingResult::Matched {
+            ticket_id,
             match_id,
             lobby_id,
             ws_url,
             region,
         } => HeadMatchmakingResponse {
             status: HeadMatchmakingStatus::Matched,
-            ticket_id: None,
+            ticket_id: Some(ticket_id),
             match_id: Some(match_id),
             lobby_id: Some(lobby_id),
             ws_url: Some(ws_url),
@@ -427,7 +428,7 @@ mod tests {
         .expect("enqueue should succeed");
 
         assert_eq!(result.0.status, HeadMatchmakingStatus::Matched);
-        assert_eq!(result.0.ticket_id, None);
+        assert_eq!(result.0.ticket_id.as_deref(), Some("ticket-123"));
         assert_eq!(result.0.match_id.as_deref(), Some("match-123"));
         assert_eq!(result.0.lobby_id.as_deref(), Some("match-123"));
         assert_eq!(result.0.ws_url.as_deref(), Some("ws://game.public/ws"));
@@ -462,6 +463,39 @@ mod tests {
         assert_eq!(result.0.match_id, None);
         assert_eq!(result.0.lobby_id, None);
         assert_eq!(result.0.ws_url, None);
+        assert_eq!(result.0.region, "eu-west");
+    }
+
+    #[tokio::test]
+    async fn poll_matchmaking_returns_game_ready_match_response() {
+        let state = app_state(
+            verified_auth(),
+            Arc::new(MockMatchmakingProvider {
+                poll_response: Mutex::new(Some(Ok(MatchmakingLifecycleState::Matched {
+                    ticket_id: "ticket-123".into(),
+                    match_id: "match-123".into(),
+                    player_ids: vec![7, 42],
+                    region: "eu-west".into(),
+                }))),
+                ..Default::default()
+            }),
+            resolved_server(),
+            provisioner_created(),
+        );
+
+        let result = poll_matchmaking(
+            State(state),
+            Path("ticket-123".to_string()),
+            bearer_headers("token-123"),
+        )
+        .await
+        .expect("poll should succeed");
+
+        assert_eq!(result.0.status, HeadMatchmakingStatus::Matched);
+        assert_eq!(result.0.ticket_id.as_deref(), Some("ticket-123"));
+        assert_eq!(result.0.match_id.as_deref(), Some("match-123"));
+        assert_eq!(result.0.lobby_id.as_deref(), Some("match-123"));
+        assert_eq!(result.0.ws_url.as_deref(), Some("ws://game.public/ws"));
         assert_eq!(result.0.region, "eu-west");
     }
 
