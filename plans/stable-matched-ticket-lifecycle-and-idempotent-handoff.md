@@ -12,8 +12,16 @@ Durable decisions that apply across all phases:
 - **Match state ownership**: Matchmaking remains the source of truth for
   ticket state and matched results. Head does not persist queue or handoff
   state locally.
+- **Handoff trigger**: Head may attempt matched handoff on either enqueue or
+  poll. The first request that observes `matched` attempts lobby creation, and
+  later matched requests retry the same handoff.
 - **Matched payload**: A matched ticket lookup returns an authoritative match
   payload that includes `match_id`, `player_ids`, and `region`.
+- **Head matched payload**: The final client-visible matched response from
+  head includes `ticket_id`, `match_id`, `lobby_id`, `ws_url`, and `region`.
+- **Ticket traceability**: `ticket_id` remains in the final matched head
+  response for traceability and debugging only. It does not gain new
+  post-handoff behavior.
 - **Dual-ticket visibility**: Once two players are paired, both players'
   tickets resolve to the same matched payload.
 - **Lobby identifier**: Head derives `lobby_id` directly from `match_id`.
@@ -21,8 +29,9 @@ Durable decisions that apply across all phases:
   and `409 already exists` as successful handoff outcomes for the same
   `lobby_id`.
 - **Roster verification on duplicate create**: Verification of the existing
-  lobby roster is deferred. Phase 3 relies on the invariant that
-  matchmaking-derived lobby IDs are owned by head and are derived from
+  lobby roster is deferred. `409 already exists` is treated as definitive
+  success for the requested `lobby_id`, and phase 3 relies on the invariant
+  that matchmaking-derived lobby IDs are owned by head and are derived from
   authoritative `match_id` values.
 - **Game-server contract**: Head creates game lobbies using the existing
   game-server lobby creation endpoint with `lobby_id` and
@@ -98,25 +107,31 @@ one-time delivery semantics.
 Complete the handoff path from a stable matched ticket result to a game-ready
 lobby assignment. Head resolves the target game server, derives
 `lobby_id = match_id`, and creates the lobby using the authoritative
-`player_ids` roster from matchmaking. If the lobby already exists, head treats
-that duplicate create as a successful retry and returns the same final join
-payload.
+`player_ids` roster from matchmaking. The triggering request may be enqueue or
+poll, depending on which request first observes `matched`. If the lobby
+already exists, head treats that duplicate create as a successful retry and
+returns the same final join payload.
 
-This slice delivers retry-safe end-to-end behavior for matched polling without
-adding head-owned persistence or a game-server readback contract.
+This slice delivers retry-safe end-to-end behavior for matched enqueue and
+poll flows without adding head-owned persistence or a game-server readback
+contract.
 
 ### Acceptance criteria
 
 - [ ] Head derives `lobby_id` directly from `match_id`.
 - [ ] Head creates the game-server lobby with the matched `player_ids` as
       `allowed_player_ids`.
+- [ ] The final matched response from head includes `ticket_id`, `match_id`,
+      `lobby_id`, `ws_url`, and `region`.
 - [ ] Game-server `201 created` and `409 already exists` are both treated as
       successful handoff outcomes for the same `lobby_id`.
-- [ ] Repeated matched polls can return the same final join payload without
-      producing false failures.
+- [ ] Repeated matched enqueue or poll requests can return the same final join
+      payload without producing false failures.
+- [ ] Handoff failures return errors and continue retrying on later matched
+      requests until the lobby handoff succeeds.
 - [ ] Head tests cover first-create and duplicate-create handoff behavior.
-- [ ] Integration-style coverage exists for the retry path from matched poll to
-      successful lobby handoff.
+- [ ] Bruno/process-compose coverage exists for the retry path from matched
+      lifecycle response to successful lobby handoff.
 
 ---
 

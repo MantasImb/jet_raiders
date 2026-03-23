@@ -46,6 +46,7 @@ When the matchmaking service reports a completed match, the head server will:
 The final matched response from head should include the connection payload the
 client needs to stop polling and proceed to gameplay, including:
 
+- `ticket_id`
 - `match_id`
 - `lobby_id`
 - `ws_url`
@@ -123,18 +124,26 @@ into dynamic service discovery.
   - queue cancellation by `ticket_id`
 - When polling returns `waiting`, head returns a minimal waiting response and
   does not fabricate additional state.
-- When polling returns `matched`, head must complete match handoff before
-  replying successfully to the client.
+- When enqueue or polling returns `matched`, head must complete match handoff
+  before replying successfully to the client.
 - Match handoff means:
   - resolve target game server by region
   - create lobby on that game server
   - return final join payload to the client
 - The matched response from head includes:
   - `status`
+  - `ticket_id`
   - `match_id`
   - `lobby_id`
   - `ws_url`
   - `region`
+- `ticket_id` in the matched response is preserved for traceability/debugging
+  only and does not carry new post-handoff behavior.
+- Handoff may be triggered by either enqueue or poll. The first request that
+  observes `matched` attempts lobby creation, and later matched requests retry
+  the same idempotent handoff.
+- Game-server `409 already exists` is treated as a successful handoff outcome
+  for the requested `lobby_id`.
 - The waiting response from head includes:
   - `status`
   - `ticket_id`
@@ -204,14 +213,17 @@ into dynamic service discovery.
   - guest login delegates correctly to auth
   - enter matchmaking delegates correctly to matchmaking
   - poll matchmaking returns waiting without attempting lobby creation
-  - poll matchmaking returns matched only after successful lobby creation
-  - matched poll response includes `match_id`, `lobby_id`, `ws_url`, and
-    `region`
+  - matched enqueue or poll returns success only after successful lobby
+    creation
+  - matched head response includes `ticket_id`, `match_id`, `lobby_id`,
+    `ws_url`, and `region`
   - cancel matchmaking delegates correctly to matchmaking
   - queue entry response preserves `ticket_id` and `region` when waiting
   - queue entry response surfaces immediate matched outcomes cleanly
   - missing regional mapping falls back to the default game server
-  - lobby creation failure prevents a successful matched response
+  - duplicate lobby create (`409`) is treated as successful retry-safe handoff
+  - lobby creation failure prevents a successful matched response and retries
+    on later matched requests
 - Matchmaking-service tests should expand to cover:
   - status lookup by `ticket_id`
   - cancel by `ticket_id`

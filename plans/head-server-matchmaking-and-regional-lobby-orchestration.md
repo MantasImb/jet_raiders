@@ -27,9 +27,13 @@ Durable decisions that apply across all phases:
 - **Head-facing matched payload**: The head-facing matched result returned from
   matchmaking includes `ticket_id`, `match_id`, `player_ids`, and `region`.
 - **Match handoff contract**: A client-visible `matched` response is only valid
-  after head has successfully created the target lobby on a game server.
-- **Matched payload**: The client-ready matched response includes `match_id`,
-  `lobby_id`, `ws_url`, and `region`.
+  after head has successfully created or confirmed the target lobby on a game
+  server.
+- **Handoff trigger**: Head may perform matched handoff on either queue entry
+  or polling. The first head request that observes `matched` attempts lobby
+  creation; later matched requests retry the same idempotent handoff.
+- **Matched payload**: The client-ready matched response includes `ticket_id`,
+  `match_id`, `lobby_id`, `ws_url`, and `region`.
 - **Waiting payload**: The waiting response includes `status: waiting`,
   `ticket_id`, and `region`.
 - **Canceled payload**: The client-visible canceled response includes
@@ -129,10 +133,12 @@ first concrete polling slice toward that model.
 
 ### What to build
 
-When polling indicates a match is ready, head completes the full match handoff
-before responding successfully to the client. Head resolves the default target
-game server, creates the lobby there, and returns the final join payload with
-`match_id`, `lobby_id`, `ws_url`, and `region`.
+When head observes that a match is ready, it completes the full match handoff
+before responding successfully to the client. The triggering request may be
+the enqueue call that first receives `matched` or a later poll that is the
+first head request to observe the stable matched state. Head resolves the
+default target game server, creates the lobby there, and returns the final
+join payload with `ticket_id`, `match_id`, `lobby_id`, `ws_url`, and `region`.
 
 This is the first true end-to-end tracer bullet for the PRD because it covers
 the entire client journey from queue wait to a real game-ready match. It is
@@ -143,19 +149,23 @@ matched payload is stable and ticket-centric: `ticket_id`, `match_id`,
 
 ### Acceptance criteria
 
-- [ ] Head can create a lobby on the current default game server after a
-      matched poll result.
+- [ ] Head can create a lobby on the current default game server when enqueue
+      or poll returns a matched lifecycle result.
 - [ ] Head returns a matched response only after lobby creation succeeds.
-- [ ] The matched response includes `match_id`, `lobby_id`, `ws_url`, and
-      `region`.
+- [ ] The matched response includes `ticket_id`, `match_id`, `lobby_id`,
+      `ws_url`, and `region`.
 - [ ] Head uses the upstream `player_ids` roster as the authoritative
       `allowed_player_ids` input when creating the game-server lobby.
 - [ ] Head derives `lobby_id` from `match_id` and treats duplicate lobby create
       outcomes as retry-safe handoff success for the same match.
+- [ ] Game-server `409 already exists` is treated as a successful handoff for
+      the requested `lobby_id`.
 - [ ] Lobby-creation failure is surfaced as a failed handoff rather than a
-      false-success matched response.
-- [ ] Integration-style coverage exists for the head-to-game-server lobby
-      creation path.
+      false-success matched response, and repeated matched requests continue to
+      retry until handoff succeeds.
+- [ ] Rust unit tests cover first-create and duplicate-create handoff behavior.
+- [ ] Bruno/process-compose coverage exists for the real head-to-game-server
+      lobby creation path.
 - [ ] Two-player happy-path behavior is demoable end-to-end through head.
 
 ---
