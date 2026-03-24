@@ -36,3 +36,25 @@ The current collection also includes setup requests for three guest sessions
 and a follow-up cancel request for the waiting-ticket flow. The matched-flow
 requests assert that head returns `ticket_id` together with `match_id`,
 `lobby_id`, `ws_url`, and `region`.
+
+`04-waiting-ticket-transitions-to-matched.bru` also runs
+`head/assert-lobby-visibility.mjs`, which uses the matched `ws_url`,
+`lobby_id`, and both players' `session_token` values to verify that:
+
+- both players can complete the public WebSocket join handshake
+- both players receive the expected identity assignment
+- both players observe each other in `WorldUpdate.entities`
+
+## Local-Only Assumptions
+
+This Bruno collection intentionally includes machine-specific assumptions for
+the current solo-developer workflow.
+
+- The WebSocket visibility check may rely on local absolute paths.
+- The helper execution may rely on the current machine's Node installation
+  layout.
+- These tradeoffs are accepted for the Bruno tests only.
+
+Do not treat this as a repository-wide portability standard. Outside the Bruno
+test collection, keep the usual expectation that code and tooling remain
+portable and not tied to one developer machine.
