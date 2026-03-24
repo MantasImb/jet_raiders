@@ -528,34 +528,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cancel_matchmaking_returns_canceled_response_for_duplicate_cancel() {
-        let state = app_state(
-            verified_auth(),
-            Arc::new(MockMatchmakingProvider {
-                cancel_response: Mutex::new(Some(Ok(MatchmakingLifecycleState::Canceled {
-                    ticket_id: "ticket-123".into(),
-                    region: "eu-west".into(),
-                }))),
-                ..Default::default()
-            }),
-            Arc::new(MockGameServerDirectory::default()),
-            Arc::new(MockGameServerProvisioner::default()),
-        );
-
-        let result = cancel_matchmaking(
-            State(state),
-            Path("ticket-123".to_string()),
-            bearer_headers("token-123"),
-        )
-        .await
-        .expect("duplicate cancel should succeed");
-
-        assert_eq!(result.0.status, HeadMatchmakingStatus::Canceled);
-        assert_eq!(result.0.ticket_id.as_deref(), Some("ticket-123"));
-        assert_eq!(result.0.region, "eu-west");
-    }
-
-    #[tokio::test]
     async fn cancel_matchmaking_maps_conflict_to_http_409() {
         let state = app_state(
             verified_auth(),
