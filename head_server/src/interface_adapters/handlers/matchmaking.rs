@@ -551,4 +551,29 @@ mod tests {
             Err(status) => assert_eq!(status, StatusCode::CONFLICT),
         }
     }
+
+    #[tokio::test]
+    async fn cancel_matchmaking_maps_not_found_to_http_404() {
+        let state = app_state(
+            verified_auth(),
+            Arc::new(MockMatchmakingProvider {
+                cancel_response: Mutex::new(Some(Err(MatchmakingProviderError::NotFound))),
+                ..Default::default()
+            }),
+            Arc::new(MockGameServerDirectory::default()),
+            Arc::new(MockGameServerProvisioner::default()),
+        );
+
+        let result = cancel_matchmaking(
+            State(state),
+            Path("missing-ticket".to_string()),
+            bearer_headers("token-123"),
+        )
+        .await;
+
+        match result {
+            Ok(_) => panic!("missing ticket cancel should fail"),
+            Err(status) => assert_eq!(status, StatusCode::NOT_FOUND),
+        }
+    }
 }

@@ -550,6 +550,28 @@ mod tests {
     }
 
     #[test]
+    fn canceling_an_already_canceled_ticket_returns_canceled_again() {
+        let mut matchmaker = matchmaker();
+        let waiting_outcome = matchmaker.enqueue(queue_request(1, "eu-west"));
+        let ticket_id = match waiting_outcome {
+            TicketStatus::Waiting { ticket_id, .. } => ticket_id,
+            _ => panic!("first player should be queued"),
+        };
+
+        matchmaker
+            .cancel_ticket(1, ticket_id.as_str())
+            .expect("first cancel should succeed");
+
+        assert_eq!(
+            matchmaker.cancel_ticket(1, ticket_id.as_str()),
+            Ok(TicketStatus::Canceled {
+                ticket_id,
+                region: "eu-west".into(),
+            })
+        );
+    }
+
+    #[test]
     fn canceled_waiting_ticket_is_not_matched_by_later_arrivals() {
         let mut matchmaker = matchmaker();
         let waiting_outcome = matchmaker.enqueue(queue_request(1, "eu-west"));

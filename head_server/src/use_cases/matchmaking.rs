@@ -915,6 +915,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cancel_maps_matchmaking_not_found() {
+        let auth = Arc::new(MockAuthProvider {
+            verify_response: Mutex::new(Some(Ok(verified_session()))),
+            ..Default::default()
+        });
+        let matchmaking = Arc::new(MockMatchmakingProvider {
+            cancel_response: Mutex::new(Some(Err(MatchmakingProviderError::NotFound))),
+            ..Default::default()
+        });
+
+        let result = matchmaking_service(
+            auth,
+            matchmaking,
+            Arc::new(MockGameServerDirectory::default()),
+            Arc::new(MockGameServerProvisioner::default()),
+        )
+        .cancel(CancelMatchmaking {
+            session_token: "token-123".into(),
+            ticket_id: "missing-ticket".into(),
+        })
+        .await;
+
+        assert_eq!(result, Err(CancelMatchmakingError::NotFound));
+    }
+
+    #[tokio::test]
     async fn poll_status_surfaces_handoff_failure() {
         let auth = Arc::new(MockAuthProvider {
             verify_response: Mutex::new(Some(Ok(verified_session()))),
