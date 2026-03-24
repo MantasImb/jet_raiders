@@ -889,6 +889,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cancel_treats_duplicate_cancel_as_canceled_state() {
+        let auth = Arc::new(MockAuthProvider {
+            verify_response: Mutex::new(Some(Ok(verified_session()))),
+            ..Default::default()
+        });
+        let matchmaking = Arc::new(MockMatchmakingProvider {
+            cancel_response: Mutex::new(Some(Ok(MatchmakingLifecycleState::Canceled {
+                ticket_id: "ticket-123".into(),
+                region: "eu-west".into(),
+            }))),
+            ..Default::default()
+        });
+
+        let result = matchmaking_service(
+            auth,
+            matchmaking,
+            Arc::new(MockGameServerDirectory::default()),
+            Arc::new(MockGameServerProvisioner::default()),
+        )
+        .cancel(CancelMatchmaking {
+            session_token: "token-123".into(),
+            ticket_id: "ticket-123".into(),
+        })
+        .await;
+
+        assert_eq!(
+            result,
+            Ok(HeadMatchmakingResult::Canceled {
+                ticket_id: "ticket-123".into(),
+                region: "eu-west".into(),
+            })
+        );
+    }
+
+    #[tokio::test]
     async fn cancel_maps_matched_conflict() {
         let auth = Arc::new(MockAuthProvider {
             verify_response: Mutex::new(Some(Ok(verified_session()))),
@@ -912,6 +947,32 @@ mod tests {
         .await;
 
         assert_eq!(result, Err(CancelMatchmakingError::Conflict));
+    }
+
+    #[tokio::test]
+    async fn cancel_maps_matchmaking_not_found() {
+        let auth = Arc::new(MockAuthProvider {
+            verify_response: Mutex::new(Some(Ok(verified_session()))),
+            ..Default::default()
+        });
+        let matchmaking = Arc::new(MockMatchmakingProvider {
+            cancel_response: Mutex::new(Some(Err(MatchmakingProviderError::NotFound))),
+            ..Default::default()
+        });
+
+        let result = matchmaking_service(
+            auth,
+            matchmaking,
+            Arc::new(MockGameServerDirectory::default()),
+            Arc::new(MockGameServerProvisioner::default()),
+        )
+        .cancel(CancelMatchmaking {
+            session_token: "token-123".into(),
+            ticket_id: "missing-ticket".into(),
+        })
+        .await;
+
+        assert_eq!(result, Err(CancelMatchmakingError::NotFound));
     }
 
     #[tokio::test]

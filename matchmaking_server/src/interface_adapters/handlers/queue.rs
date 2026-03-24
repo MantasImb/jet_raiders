@@ -397,6 +397,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cancel_ticket_returns_canceled_response_for_duplicate_cancel() {
+        let mut matchmaker = matchmaker();
+        let queued = matchmaker.enqueue(EnqueuePlayer {
+            player_id: 1,
+            player_skill: 1200,
+            region: "eu-west".into(),
+        });
+        let ticket_id = match queued {
+            TicketStatus::Waiting { ticket_id, .. } => ticket_id,
+            _ => panic!("first player should be queued"),
+        };
+        matchmaker
+            .cancel_ticket(1, ticket_id.as_str())
+            .expect("first cancel should succeed");
+
+        let result = cancel_ticket(
+            State(app_state(matchmaker)),
+            Path(ticket_id.clone()),
+            Ok(Query(TicketOwnerQuery { player_id: 1 })),
+        )
+        .await
+        .expect("duplicate cancel should succeed");
+
+        assert!(matches!(result.0.status, QueueStatus::Canceled));
+        assert_eq!(result.0.ticket_id, ticket_id);
+        assert_eq!(result.0.region, "eu-west");
+    }
+
+    #[tokio::test]
     async fn cancel_ticket_rejects_matched_tickets() {
         let mut matchmaker = matchmaker();
         let queued = matchmaker.enqueue(EnqueuePlayer {
@@ -429,6 +458,24 @@ mod tests {
                     error.0.message,
                     format!("ticket_id {first_ticket_id} is already matched")
                 );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn cancel_ticket_returns_not_found_for_unknown_ticket() {
+        let result = cancel_ticket(
+            State(app_state(matchmaker())),
+            Path("missing-ticket".to_string()),
+            Ok(Query(TicketOwnerQuery { player_id: 1 })),
+        )
+        .await;
+
+        match result {
+            Ok(_) => panic!("missing ticket should not succeed"),
+            Err((status, error)) => {
+                assert_eq!(status, StatusCode::NOT_FOUND);
+                assert_eq!(error.0.message, "ticket_id missing-ticket was not found");
             }
         }
     }

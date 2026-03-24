@@ -186,14 +186,14 @@ head orchestration pattern.
 
 ### Acceptance criteria
 
-- [ ] The matchmaking service supports cancellation by `ticket_id`.
-- [ ] The head server exposes a client-facing cancellation endpoint.
-- [ ] Canceling an active waiting ticket returns explicit `canceled` state.
-- [ ] A canceled ticket no longer transitions to matched on later polls.
-- [ ] A matched ticket cannot be canceled.
-- [ ] Re-enqueue after cancel is delegated to matchmaking and results in a new
+- [x] The matchmaking service supports cancellation by `ticket_id`.
+- [x] The head server exposes a client-facing cancellation endpoint.
+- [x] Canceling an active waiting ticket returns explicit `canceled` state.
+- [x] A canceled ticket no longer transitions to matched on later polls.
+- [x] A matched ticket cannot be canceled.
+- [x] Re-enqueue after cancel is delegated to matchmaking and results in a new
       waiting ticket rather than head-owned state repair.
-- [ ] Head and matchmaking tests cover successful cancel, duplicate cancel, and
+- [x] Head and matchmaking tests cover successful cancel, duplicate cancel, and
       unknown-ticket behavior.
 
 ---
