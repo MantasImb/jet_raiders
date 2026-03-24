@@ -30,6 +30,7 @@ pub enum HeadMatchmakingResult {
         region: String,
     },
     Matched {
+        ticket_id: String,
         match_id: String,
         lobby_id: String,
         ws_url: String,
@@ -466,16 +467,19 @@ impl MatchmakingService {
                 Ok(HeadMatchmakingResult::Canceled { ticket_id, region })
             }
             MatchmakingLifecycleState::Matched {
+                ticket_id,
                 match_id,
                 player_ids,
                 region,
-                ..
-            } => self.complete_handoff(match_id, player_ids, region).await,
+            } => self
+                .complete_handoff(ticket_id, match_id, player_ids, region)
+                .await,
         }
     }
 
     async fn complete_handoff(
         &self,
+        ticket_id: String,
         match_id: String,
         player_ids: Vec<u64>,
         region: String,
@@ -492,6 +496,7 @@ impl MatchmakingService {
             .await?;
 
         Ok(HeadMatchmakingResult::Matched {
+            ticket_id,
             match_id,
             lobby_id,
             ws_url: game_server.ws_url,
@@ -752,6 +757,7 @@ mod tests {
         assert_eq!(
             result,
             HeadMatchmakingResult::Matched {
+                ticket_id: "ticket-123".into(),
                 match_id: "match-123".into(),
                 lobby_id: "match-123".into(),
                 ws_url: "ws://game.public/ws".into(),
@@ -807,6 +813,7 @@ mod tests {
         assert_eq!(
             result,
             HeadMatchmakingResult::Matched {
+                ticket_id: "ticket-123".into(),
                 match_id: "match-123".into(),
                 lobby_id: "match-123".into(),
                 ws_url: "ws://game.public/ws".into(),
