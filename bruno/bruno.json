@@ -2,6 +2,16 @@
   "version": "1",
   "name": "jet-raiders",
   "type": "collection",
+  "scripts": {
+    "moduleWhitelist": [
+      "child_process",
+      "fs",
+      "path"
+    ],
+    "filesystemAccess": {
+      "allow": true
+    }
+  },
   "ignore": [
     "node_modules",
     ".git"

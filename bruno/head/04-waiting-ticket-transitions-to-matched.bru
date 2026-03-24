@@ -18,6 +18,9 @@ tests {
   test("player A polling sees the same final handoff result", function() {
     const body = res.getBody();
     const expectedWsUrl = bru.getProcessEnv("EXPECTED_WS_URL");
+    const childProcess = require("child_process");
+    const fs = require("fs");
+    const path = require("path");
 
     expect(res.getStatus()).to.equal(200);
     expect(body.status).to.equal("matched");
@@ -26,5 +29,48 @@ tests {
     expect(body.ws_url).to.equal(expectedWsUrl);
     expect(body.region).to.equal("eu-west");
     expect(body.ticket_id).to.equal(bru.getVar("player_a_ticket_id"));
+
+    const cwd = typeof process.cwd === "function" ? process.cwd() : "";
+    const scriptPathCandidates = [
+      path.resolve(cwd, "bruno", "head", "assert-lobby-visibility.mjs"),
+      path.resolve(cwd, "head", "assert-lobby-visibility.mjs"),
+      path.resolve(cwd, "assert-lobby-visibility.mjs"),
+      path.resolve("/Users/mantas/repos/jet-raiders/bruno/head/assert-lobby-visibility.mjs")
+    ];
+    const scriptPath = scriptPathCandidates.find((candidate) =>
+      fs.existsSync(candidate)
+    );
+
+    expect(scriptPath).to.be.a("string");
+
+    const visibilityCheckPayload = JSON.stringify({
+      wsUrl: body.ws_url,
+      lobbyId: body.lobby_id,
+      playerAId: bru.getVar("player_a_guest_id"),
+      playerASessionToken: bru.getVar("player_a_session_token"),
+      playerBId: bru.getVar("player_b_guest_id"),
+      playerBSessionToken: bru.getVar("player_b_session_token")
+    });
+
+    const nodeExecutableCandidates = [
+      "/opt/homebrew/bin/node",
+      "/usr/local/bin/node",
+      "node"
+    ].filter((candidate) => typeof candidate === "string" && candidate.length > 0);
+    const nodeExecutable = nodeExecutableCandidates.find((candidate) =>
+      candidate === "node" || fs.existsSync(candidate)
+    );
+
+    expect(nodeExecutable).to.be.a("string");
+
+    const visibilityCheckOutput = childProcess.execFileSync(
+      nodeExecutable,
+      [scriptPath, visibilityCheckPayload],
+      { encoding: "utf8" }
+    );
+    const visibilityCheckResult = JSON.parse(visibilityCheckOutput);
+
+    expect(visibilityCheckResult.ok).to.equal(true);
+    expect(visibilityCheckResult.results).to.have.length(2);
   });
 }
