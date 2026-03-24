@@ -18,6 +18,8 @@ matchmaking, or game-server dependencies.
 - Start `auth_server`, `matchmaking_server`, `game_server`, and `head_server`.
 - In Bruno, open the `bruno/` collection root.
 - The collection reads `bruno/.env` automatically through `process.env.*`.
+- `head/assert-lobby-visibility.mjs` requires `Node >=21` because it relies on
+  the built-in `WebSocket` client.
 - Run the `head/` requests in sequence because the later cases depend on state
   created by the earlier setup and queue requests.
 

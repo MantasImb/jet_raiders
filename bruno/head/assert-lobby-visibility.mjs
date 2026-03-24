@@ -5,6 +5,23 @@
 
 const DEFAULT_TIMEOUT_MS = 8_000;
 
+function ensureRuntimeSupportsWebSocket() {
+  const nodeVersion = process.versions?.node || "unknown";
+  const nodeMajor = Number.parseInt(nodeVersion.split(".")[0], 10);
+
+  if (Number.isNaN(nodeMajor) || nodeMajor < 21) {
+    throw new Error(
+      `assert-lobby-visibility.mjs requires Node >=21; current runtime is ${nodeVersion}`,
+    );
+  }
+
+  if (typeof WebSocket !== "function") {
+    throw new Error(
+      "assert-lobby-visibility.mjs requires a runtime with built-in WebSocket support",
+    );
+  }
+}
+
 function parseArgs() {
   const payload = process.argv[2];
   if (!payload) {
@@ -64,11 +81,11 @@ function connectAndObserve({
   visiblePlayerIds,
   timeoutMs,
 }) {
-  return new Promise((resolve, reject) => {
-    const socket = new WebSocket(buildLobbyUrl(wsUrl, lobbyId));
-    let settled = false;
-    let identityVerified = false;
+  const socket = new WebSocket(buildLobbyUrl(wsUrl, lobbyId));
+  let settled = false;
+  let identityVerified = false;
 
+  const completion = new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       finish(
         new Error(
@@ -84,9 +101,9 @@ function connectAndObserve({
 
       settled = true;
       clearTimeout(timeout);
-      closeSocket(socket);
 
       if (error) {
+        closeSocket(socket);
         reject(error);
         return;
       }
@@ -172,13 +189,21 @@ function connectAndObserve({
       );
     });
   });
+
+  return {
+    completion,
+    close() {
+      closeSocket(socket);
+    },
+  };
 }
 
 async function main() {
+  ensureRuntimeSupportsWebSocket();
+
   const args = parseArgs();
   const visiblePlayerIds = [args.playerAId, args.playerBId];
-
-  const results = await Promise.all([
+  const observers = [
     connectAndObserve({
       name: "player-a",
       wsUrl: args.wsUrl,
@@ -197,9 +222,18 @@ async function main() {
       visiblePlayerIds,
       timeoutMs: args.timeoutMs,
     }),
-  ]);
+  ];
 
-  process.stdout.write(`${JSON.stringify({ ok: true, results })}\n`);
+  try {
+    const results = await Promise.all(
+      observers.map((observer) => observer.completion),
+    );
+    process.stdout.write(`${JSON.stringify({ ok: true, results })}\n`);
+  } finally {
+    for (const observer of observers) {
+      observer.close();
+    }
+  }
 }
 
 main().catch((error) => {
