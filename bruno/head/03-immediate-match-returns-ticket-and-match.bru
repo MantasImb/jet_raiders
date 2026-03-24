@@ -34,6 +34,7 @@ tests {
     expect(body.ws_url).to.equal(expectedWsUrl);
     expect(body.region).to.equal("eu-west");
     expect(body.ticket_id).to.be.a("string");
+    expect(body.ticket_id.length).to.be.greaterThan(0);
 
     bru.setVar("match_id", body.match_id);
     bru.setVar("lobby_id", body.lobby_id);
