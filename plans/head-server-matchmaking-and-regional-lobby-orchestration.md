@@ -202,28 +202,36 @@ head orchestration pattern.
 
 **User stories**: 11, 12, 13, 14
 
+> Detailed implementation plan:
+> `plans/strict-regional-routing-shared-config.md`
+
 ### What to build
 
-Introduce a game-server registry abstraction in head that resolves the target
-game server for a region. The first implementation is configuration-backed and
-stores the internal base URL used for lobby creation plus the public `ws_url`
-returned to clients, with a default global fallback when no specific regional
-mapping exists.
+Introduce a shared region catalog plus a game-server registry abstraction in
+head that resolves the target game server for a region. The first
+implementation is configuration-backed through a repo-level shared
+`regions.toml` artifact that defines the canonical allowed region set and the
+per-region game-server routing data used by head.
 
 This phase keeps the client contract stable while making regional expansion a
 real part of the backend design instead of an undocumented assumption. The
-same matchmaking and handoff flow continues to work, but head now owns the
-selection logic explicitly.
+same matchmaking and handoff flow continues to work, but region policy is now
+explicit and validated rather than relying on a default fallback path.
 
 ### Acceptance criteria
 
 - [ ] Head resolves game-server destination by region through a dedicated
       abstraction rather than hard-coded branching.
-- [ ] The first implementation is configuration-backed and supports a default
-      fallback server.
+- [ ] The first implementation uses a repo-level shared region config artifact
+      rather than head-local ad hoc environment mappings.
 - [ ] The matched handoff flow uses the resolved server’s internal base URL for
       lobby creation and returns that server’s public `ws_url` to the client.
-- [ ] Missing region-specific mappings fall back to the default global server.
-- [ ] Tests cover exact region resolution and fallback behavior.
+- [ ] Region matching is exact and does not normalize or alias region strings.
+- [ ] Any shared-region-config misconfiguration fails startup rather than
+      degrading to a default route.
+- [ ] Every valid region is declared explicitly; `global` is not modeled as a
+      region.
+- [ ] Tests cover exact region resolution and startup-time config validation
+      failures.
 - [ ] The system remains demoable even when all configured regions point to the
       same current global game server.
