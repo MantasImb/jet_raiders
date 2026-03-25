@@ -2,12 +2,9 @@
 
 > Source PRD: `head_server/PRD.md`
 >
-> Upstream dependency for later phases:
-> `plans/matchmaking-server-head-integration-phases.md`
->
-> Implementation note: phases 3 and 4 in this plan assume the matchmaking
-> lifecycle and payload contract defined in the matchmaking integration plan
-> has been implemented first.
+> Implementation note: phases 3 and 4 in this plan rely on the stable
+> ticket-centric lifecycle and matched payload contract now documented in
+> `matchmaking_server/README.md`.
 
 ## Architectural decisions
 

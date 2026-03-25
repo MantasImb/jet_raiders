@@ -19,8 +19,7 @@ matchmaking_server/
 └── src/
     ├── main.rs
     ├── domain/
-    │   ├── mod.rs
-    │   └── queue.rs
+    │   └── mod.rs
     ├── use_cases/
     │   ├── mod.rs
     │   └── matchmaker.rs
@@ -33,6 +32,7 @@ matchmaking_server/
     │       ├── mod.rs
     │       └── queue.rs
     └── frameworks/
+        ├── id_generator.rs
         ├── mod.rs
         └── server.rs
 ```
@@ -51,12 +51,27 @@ matchmaking_server/
    `canceled`, and `DELETE /matchmaking/queue/{ticket_id}` transitions a
    waiting ticket to `canceled`.
 
+## Current In-Memory Model (Implemented)
+
+- `queue: VecDeque<String>` stores waiting `ticket_id` order.
+- `tickets_by_id: HashMap<String, TicketRecord>` is the authoritative ticket
+  store.
+- `active_ticket_by_player: HashMap<u64, String>` preserves the current active
+  ticket handle for each player.
+- `matches_by_id: HashMap<String, MatchRecord>` stores the canonical matched
+  roster once per `match_id`.
+
+Matched tickets store `match_id` and resolve their shared payload through
+`matches_by_id` during lookup instead of embedding duplicate roster data in
+each ticket record.
+
 ## Layer Ownership
 
-- `domain/`: queue entities and ID builders.
+- `domain/`: reserved for future matchmaking-specific domain entities.
 - `use_cases/`: matchmaking orchestration and outcomes/errors.
 - `interface_adapters/`: HTTP DTOs, validation, route wiring, app state.
-- `frameworks/`: runtime bootstrap, tracing setup, and server startup.
+- `frameworks/`: runtime bootstrap, tracing setup, server startup, and opaque
+  ID generation.
 
 ## Current Constraints
 
@@ -67,16 +82,13 @@ matchmaking_server/
 
 ## Incremental Delivery Plan
 
-1. Add lifecycle logging for ticket creation, match transitions, and
-   cancellation.
-2. Add queue expiry/cleanup for stale waiting entries.
-3. Add metrics and richer tracing for queue depth and wait time.
-4. Introduce a persistence adapter behind a trait boundary if in-memory state
+1. Add queue expiry/cleanup for stale waiting entries.
+2. Add metrics and richer tracing for queue depth and wait time.
+3. Introduce a persistence adapter behind a trait boundary if in-memory state
    becomes an operational limit.
 
 ## Acceptance Criteria for Next Iteration
 
-- Lifecycle events are observable in logs.
 - Stale tickets are cleaned up deterministically.
 - Existing enqueue, match, poll, and cancel behavior remains compatible for
   current callers.

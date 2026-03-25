@@ -52,6 +52,37 @@ leaving room for additional matchmaking rules later.
    notifies the client immediately (matched) or keeps the client polling until
    later orchestration phases complete the final handoff.
 
+## In-Memory Lifecycle Model
+
+The current implementation keeps queue ordering separate from authoritative
+ticket and match state:
+
+- `queue: VecDeque<String>` stores waiting `ticket_id` order only.
+- `tickets_by_id: HashMap<String, TicketRecord>` stores the authoritative
+  lifecycle state for each ticket.
+- `active_ticket_by_player: HashMap<u64, String>` tracks the current active
+  ticket for each player so re-enqueue can return the existing waiting or
+  matched result.
+- `matches_by_id: HashMap<String, MatchRecord>` stores the canonical matched
+  payload once per match.
+
+This means matched tickets do not duplicate the full roster payload in their
+ticket record. Instead, each matched ticket stores `match_id`, and lookup
+resolves the shared `MatchRecord` by that key.
+
+The current ticket lifecycle model is:
+
+- `Waiting { player_id, player_skill, region }`
+- `Matched { player_id, match_id }`
+- `Canceled { player_id, region }`
+
+The current canonical match record is:
+
+- `MatchRecord { match_id, player_ids, region }`
+
+Match formation updates both ticket records and the shared match record inside
+the same in-memory critical section so partially matched state is not exposed.
+
 ## External Interfaces
 
 ### HTTP API
