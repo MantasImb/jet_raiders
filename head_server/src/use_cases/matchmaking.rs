@@ -315,6 +315,7 @@ pub enum GameServerError {
     BadRequest,
     UnexpectedClientError,
     UpstreamUnavailable,
+    UnknownRegion { region: String },
     Unexpected,
 }
 
@@ -471,9 +472,10 @@ impl MatchmakingService {
                 match_id,
                 player_ids,
                 region,
-            } => self
-                .complete_handoff(ticket_id, match_id, player_ids, region)
-                .await,
+            } => {
+                self.complete_handoff(ticket_id, match_id, player_ids, region)
+                    .await
+            }
         }
     }
 
@@ -510,6 +512,7 @@ fn map_game_server_error_to_enter(error: GameServerError) -> EnterMatchmakingErr
         GameServerError::BadRequest => EnterMatchmakingError::BadRequest,
         GameServerError::UnexpectedClientError => EnterMatchmakingError::UnexpectedClientError,
         GameServerError::UpstreamUnavailable => EnterMatchmakingError::UpstreamUnavailable,
+        GameServerError::UnknownRegion { .. } => EnterMatchmakingError::Unexpected,
         GameServerError::Unexpected => EnterMatchmakingError::Unexpected,
     }
 }
@@ -519,6 +522,7 @@ fn map_game_server_error_to_poll(error: GameServerError) -> PollMatchmakingError
         GameServerError::BadRequest => PollMatchmakingError::BadRequest,
         GameServerError::UnexpectedClientError => PollMatchmakingError::UnexpectedClientError,
         GameServerError::UpstreamUnavailable => PollMatchmakingError::UpstreamUnavailable,
+        GameServerError::UnknownRegion { .. } => PollMatchmakingError::Unexpected,
         GameServerError::Unexpected => PollMatchmakingError::Unexpected,
     }
 }
@@ -972,5 +976,42 @@ mod tests {
             .await;
 
         assert_eq!(result, Err(PollMatchmakingError::UpstreamUnavailable));
+    }
+
+    #[tokio::test]
+    async fn poll_status_surfaces_unknown_runtime_region_as_error() {
+        let auth = Arc::new(MockAuthProvider {
+            verify_response: Mutex::new(Some(Ok(verified_session()))),
+            ..Default::default()
+        });
+        let matchmaking = Arc::new(MockMatchmakingProvider {
+            poll_response: Mutex::new(Some(Ok(MatchmakingLifecycleState::Matched {
+                ticket_id: "ticket-123".into(),
+                match_id: "match-123".into(),
+                player_ids: vec![7, 42],
+                region: "unknown-region".into(),
+            }))),
+            ..Default::default()
+        });
+        let directory = Arc::new(MockGameServerDirectory {
+            resolve_response: Mutex::new(Some(Err(GameServerError::UnknownRegion {
+                region: "unknown-region".into(),
+            }))),
+            ..Default::default()
+        });
+
+        let result = matchmaking_service(
+            auth,
+            matchmaking,
+            directory,
+            Arc::new(MockGameServerProvisioner::default()),
+        )
+        .poll_status(PollMatchmaking {
+            session_token: "token-123".into(),
+            ticket_id: "ticket-123".into(),
+        })
+        .await;
+
+        assert_eq!(result, Err(PollMatchmakingError::Unexpected));
     }
 }

@@ -206,13 +206,20 @@ Authorization: Bearer <session_token>
 - Default auth base URL: `http://localhost:3002`
 - Matchmaking base URL env var: `MATCHMAKING_SERVICE_URL`
 - Default matchmaking base URL: `http://localhost:3003`
-- Game server default base URL env var: `GAME_SERVER_DEFAULT_BASE_URL`
-- Default game server base URL: `http://localhost:3001`
-- Game server default WebSocket URL env var: `GAME_SERVER_DEFAULT_WS_URL`
-- Default game server WebSocket URL: `ws://localhost:3001/ws`
-- Optional regional override env var: `GAME_SERVER_REGION_MAP`
-  - Format: `region=base_url=ws_url;region=base_url=ws_url`
+- Shared region config env var override: `REGION_CONFIG_PATH`
+- Default shared region config path: `../config/regions.toml`
+- Startup fails fast if the shared region config is missing, unreadable,
+  malformed, empty, has duplicate `matchmaking_key` values, omits required
+  fields, or contains invalid game-server URLs.
+- Head resolves regions by exact `matchmaking_key` only.
+- Head does not trim, lowercase, or fall back to a default route when
+  matchmaking returns an unknown region.
 - Tracing controls: `RUST_LOG`, optional `LOG_FORMAT=json`
+
+The shared config file maps concrete matchmaking region values to the internal
+game-server base URL used for lobby creation and the client-visible `ws_url`
+returned in matched responses. Local development defaults live in
+`../config/regions.toml`.
 
 ## Dependencies
 

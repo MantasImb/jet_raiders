@@ -148,15 +148,26 @@ Acceptance criteria:
 
 ### Slice 5: Matchmaking reuse path
 
-Do not broaden phase 5 into a full matchmaking region-policy refactor, but
-leave the shared file ready for that follow-up.
+Expand phase 5 from a passive reuse note into a concrete matchmaking follow-up:
+`matchmaking_server` should load the same shared region catalog and reject
+queue-entry regions that are not declared there. Today matchmaking can still
+preserve arbitrary client-submitted region strings and return them back to
+head, which means head must defensively fail runtime handoff when the region
+is not present in its loaded catalog.
 
 Acceptance criteria:
 
 - [ ] The shared config schema is documented clearly enough for
       `matchmaking_server` to reuse later.
-- [ ] The plan records that matchmaking should later validate queue-entry
-      regions against the same shared catalog.
+- [ ] `matchmaking_server` startup loads the same shared region catalog through
+      its frameworks/config layer.
+- [ ] Matchmaking queue entry rejects regions that are not declared in the
+      shared catalog.
+- [ ] Matchmaking does not invent, normalize, or preserve out-of-catalog
+      region values in stored ticket or match state.
+- [ ] Once matchmaking consumes the shared catalog, head's unknown-region
+      runtime path remains as a defensive invariant check rather than a
+      routinely reachable validation path.
 
 ## File-level implementation outline
 
@@ -176,6 +187,12 @@ Acceptance criteria:
 - `matchmaking_server/README.md`
   - Note the intended future reuse of the shared region catalog for request
     validation.
+- `matchmaking_server/src/frameworks/`
+  - Add shared region config loading for startup validation.
+- `matchmaking_server/src/interface_adapters/handlers/`
+  - Reject queue-entry requests whose `region` is not in the shared catalog.
+- `matchmaking_server/src/use_cases/`
+  - Ensure stored ticket and match state only uses validated catalog regions.
 
 ## Risks and deferred decisions
 
@@ -188,6 +205,10 @@ Acceptance criteria:
 - Matchmaking does not yet enforce the shared region catalog. Until that later
   change lands, head still needs defensive runtime handling for unknown
   regions.
+- After matchmaking adopts the shared catalog, the repo should decide whether
+  head and matchmaking both read the same full file directly or whether a
+  narrower shared region-schema helper should be introduced to avoid config
+  parsing drift across services.
 
 ## Stop condition
 

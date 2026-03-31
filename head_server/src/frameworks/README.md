@@ -19,8 +19,13 @@ This is the outermost layer and depends on all inner layers.
 
 ## Current contents
 
+- `config.rs` loads and validates shared startup configuration such as the
+  strict region catalog.
 - `server.rs` builds state, routes, and starts the Axum server.
 - `auth_client.rs` implements the `AuthProvider` port with reqwest.
+- `game_server_client.rs` implements the game-server lobby provisioning port.
+- `game_server_directory.rs` adapts validated shared region config into the
+  runtime routing directory.
 - `matchmaking_client.rs` implements the `MatchmakingProvider` port with reqwest.
 
 ## Communication

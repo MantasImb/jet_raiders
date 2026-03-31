@@ -1,0 +1,9 @@
+[regions.eu_west]
+matchmaking_key = "eu-west"
+game_server_base_url = "http://localhost:3001"
+game_server_ws_url = "ws://localhost:3001/ws"
+
+[regions.us_east]
+matchmaking_key = "us-east"
+game_server_base_url = "http://localhost:3001"
+game_server_ws_url = "ws://localhost:3001/ws"
