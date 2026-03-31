@@ -47,6 +47,10 @@ pub enum SharedRegionConfigError {
         region_entry: String,
         source: url::ParseError,
     },
+    InvalidGameServerWsUrlScheme {
+        region_entry: String,
+        scheme: String,
+    },
 }
 
 impl fmt::Display for SharedRegionConfigError {
@@ -102,6 +106,15 @@ impl fmt::Display for SharedRegionConfigError {
                 write!(
                     f,
                     "shared region config entry '{region_entry}' has invalid game_server_ws_url: {source}"
+                )
+            }
+            SharedRegionConfigError::InvalidGameServerWsUrlScheme {
+                region_entry,
+                scheme,
+            } => {
+                write!(
+                    f,
+                    "shared region config entry '{region_entry}' has invalid game_server_ws_url scheme '{scheme}'; expected ws or wss"
                 )
             }
         }
@@ -173,12 +186,20 @@ fn parse_shared_region_config(raw: &str) -> Result<SharedRegionConfig, SharedReg
                 source,
             }
         })?;
-        let _ = url::Url::parse(&game_server_ws_url).map_err(|source| {
+        let parsed_game_server_ws_url = url::Url::parse(&game_server_ws_url).map_err(|source| {
             SharedRegionConfigError::InvalidGameServerWsUrl {
                 region_entry: region_entry.clone(),
                 source,
             }
         })?;
+        // Match handoff returns this URL directly to clients, so startup must reject
+        // non-WebSocket schemes instead of letting them fail later at connect time.
+        if !matches!(parsed_game_server_ws_url.scheme(), "ws" | "wss") {
+            return Err(SharedRegionConfigError::InvalidGameServerWsUrlScheme {
+                region_entry: region_entry.clone(),
+                scheme: parsed_game_server_ws_url.scheme().to_string(),
+            });
+        }
 
         if !seen_matchmaking_keys.insert(matchmaking_key.clone()) {
             return Err(SharedRegionConfigError::DuplicateMatchmakingKey { matchmaking_key });
@@ -457,6 +478,29 @@ game_server_ws_url = "ws://localhost:3001/ws"
         assert!(matches!(
             result,
             Err(SharedRegionConfigError::InvalidGameServerBaseUrl { .. })
+        ));
+    }
+
+    #[test]
+    fn load_shared_region_config_rejects_non_websocket_game_server_ws_urls() {
+        let path = write_temp_config(
+            "invalid-ws-scheme",
+            r#"
+[regions.eu_west]
+matchmaking_key = "eu-west"
+game_server_base_url = "http://localhost:3001"
+game_server_ws_url = "http://localhost:3001/ws"
+"#,
+        );
+
+        let result = load_shared_region_config(&path);
+
+        assert!(matches!(
+            result,
+            Err(SharedRegionConfigError::InvalidGameServerWsUrlScheme {
+                region_entry,
+                scheme,
+            }) if region_entry == "eu_west" && scheme == "http"
         ));
     }
 
