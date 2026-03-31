@@ -135,6 +135,18 @@ struct RawRegionRoutingEntry {
     game_server_ws_url: Option<String>,
 }
 
+pub trait EnvSource {
+    fn get_var(&self, key: &str) -> Option<String>;
+}
+
+pub struct ProcessEnv;
+
+impl EnvSource for ProcessEnv {
+    fn get_var(&self, key: &str) -> Option<String> {
+        std::env::var(key).ok()
+    }
+}
+
 pub fn load_shared_region_config(
     path: impl AsRef<Path>,
 ) -> Result<SharedRegionConfig, SharedRegionConfigError> {
@@ -142,15 +154,20 @@ pub fn load_shared_region_config(
     parse_shared_region_config(&raw)
 }
 
-pub fn load_head_server_config() -> HeadServerConfig {
+pub fn load_head_server_config(env: &impl EnvSource) -> HeadServerConfig {
     HeadServerConfig {
-        auth_service_url: std::env::var("AUTH_SERVICE_URL")
-            .unwrap_or_else(|_| "http://localhost:3002".into()),
-        matchmaking_service_url: std::env::var("MATCHMAKING_SERVICE_URL")
-            .unwrap_or_else(|_| "http://localhost:3003".into()),
-        region_config_path: std::env::var("REGION_CONFIG_PATH")
+        auth_service_url: env
+            .get_var("AUTH_SERVICE_URL")
+            .unwrap_or_else(|| "http://localhost:3002".into()),
+        matchmaking_service_url: env
+            .get_var("MATCHMAKING_SERVICE_URL")
+            .unwrap_or_else(|| "http://localhost:3003".into()),
+        region_config_path: env
+            .get_var("REGION_CONFIG_PATH")
             .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("../config/regions.toml")),
+            .unwrap_or_else(|| {
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("../config/regions.toml")
+            }),
     }
 }
 
@@ -251,47 +268,28 @@ fn validate_matchmaking_key(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, OnceLock};
+    use std::collections::HashMap;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+    #[derive(Default)]
+    struct TestEnv {
+        vars: HashMap<String, String>,
     }
 
-    struct EnvVarGuard {
-        key: &'static str,
-        original: Option<String>,
-    }
-
-    impl EnvVarGuard {
-        fn set(key: &'static str, value: &str) -> Self {
-            let original = std::env::var(key).ok();
-            unsafe {
-                std::env::set_var(key, value);
+    impl TestEnv {
+        fn from_pairs(pairs: &[(&str, &str)]) -> Self {
+            Self {
+                vars: pairs
+                    .iter()
+                    .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
+                    .collect(),
             }
-            Self { key, original }
-        }
-
-        fn unset(key: &'static str) -> Self {
-            let original = std::env::var(key).ok();
-            unsafe {
-                std::env::remove_var(key);
-            }
-            Self { key, original }
         }
     }
 
-    impl Drop for EnvVarGuard {
-        fn drop(&mut self) {
-            match &self.original {
-                Some(value) => unsafe {
-                    std::env::set_var(self.key, value);
-                },
-                None => unsafe {
-                    std::env::remove_var(self.key);
-                },
-            }
+    impl EnvSource for TestEnv {
+        fn get_var(&self, key: &str) -> Option<String> {
+            self.vars.get(key).cloned()
         }
     }
 
@@ -506,32 +504,29 @@ game_server_ws_url = "http://localhost:3001/ws"
 
     #[test]
     fn load_head_server_config_uses_defaults_when_env_is_unset() {
-        let _lock = env_lock();
-        let _auth_guard = EnvVarGuard::unset("AUTH_SERVICE_URL");
-        let _matchmaking_guard = EnvVarGuard::unset("MATCHMAKING_SERVICE_URL");
-        let _region_guard = EnvVarGuard::unset("REGION_CONFIG_PATH");
-
-        let config = load_head_server_config();
+        let env = TestEnv::default();
+        let config = load_head_server_config(&env);
 
         assert_eq!(config.auth_service_url, "http://localhost:3002");
         assert_eq!(config.matchmaking_service_url, "http://localhost:3003");
         assert_eq!(
             config.region_config_path,
-            PathBuf::from("../config/regions.toml")
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../config/regions.toml")
         );
     }
 
     #[test]
     fn load_head_server_config_reads_env_overrides() {
-        let _lock = env_lock();
-        let _auth_guard = EnvVarGuard::set("AUTH_SERVICE_URL", "http://auth.internal:9000");
-        let _matchmaking_guard = EnvVarGuard::set(
-            "MATCHMAKING_SERVICE_URL",
-            "http://matchmaking.internal:9001",
-        );
-        let _region_guard = EnvVarGuard::set("REGION_CONFIG_PATH", "/tmp/regions.custom.toml");
+        let env = TestEnv::from_pairs(&[
+            ("AUTH_SERVICE_URL", "http://auth.internal:9000"),
+            (
+                "MATCHMAKING_SERVICE_URL",
+                "http://matchmaking.internal:9001",
+            ),
+            ("REGION_CONFIG_PATH", "/tmp/regions.custom.toml"),
+        ]);
 
-        let config = load_head_server_config();
+        let config = load_head_server_config(&env);
 
         assert_eq!(config.auth_service_url, "http://auth.internal:9000");
         assert_eq!(

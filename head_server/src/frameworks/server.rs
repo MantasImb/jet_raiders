@@ -1,5 +1,7 @@
 use crate::frameworks::auth_client::AuthClient;
-use crate::frameworks::config::{load_head_server_config, load_shared_region_config};
+use crate::frameworks::config::{
+    load_head_server_config, load_shared_region_config, ProcessEnv,
+};
 use crate::frameworks::game_server_client::GameServerClient;
 use crate::frameworks::game_server_directory::StaticGameServerDirectory;
 use crate::frameworks::matchmaking_client::MatchmakingClient;
@@ -40,7 +42,7 @@ pub async fn run() {
     let _ = dotenvy::dotenv();
     init_tracing();
 
-    let config = load_head_server_config();
+    let config = load_head_server_config(&ProcessEnv);
 
     tracing::debug!(
         auth_base_url = %config.auth_service_url,
