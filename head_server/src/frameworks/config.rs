@@ -43,6 +43,10 @@ pub enum SharedRegionConfigError {
         region_entry: String,
         source: url::ParseError,
     },
+    InvalidGameServerBaseUrlScheme {
+        region_entry: String,
+        scheme: String,
+    },
     InvalidGameServerWsUrl {
         region_entry: String,
         source: url::ParseError,
@@ -97,6 +101,15 @@ impl fmt::Display for SharedRegionConfigError {
                 write!(
                     f,
                     "shared region config entry '{region_entry}' has invalid game_server_base_url: {source}"
+                )
+            }
+            SharedRegionConfigError::InvalidGameServerBaseUrlScheme {
+                region_entry,
+                scheme,
+            } => {
+                write!(
+                    f,
+                    "shared region config entry '{region_entry}' has invalid game_server_base_url scheme '{scheme}'; expected http or https"
                 )
             }
             SharedRegionConfigError::InvalidGameServerWsUrl {
@@ -197,12 +210,20 @@ fn parse_shared_region_config(raw: &str) -> Result<SharedRegionConfig, SharedReg
             "game_server_ws_url",
         )?;
 
-        let _ = url::Url::parse(&game_server_base_url).map_err(|source| {
+        let parsed_game_server_base_url = url::Url::parse(&game_server_base_url).map_err(|source| {
             SharedRegionConfigError::InvalidGameServerBaseUrl {
                 region_entry: region_entry.clone(),
                 source,
             }
         })?;
+        // Lobby creation uses this URL as an HTTP endpoint, so startup must reject
+        // syntactically valid but unsupported schemes before runtime handoff fails.
+        if !matches!(parsed_game_server_base_url.scheme(), "http" | "https") {
+            return Err(SharedRegionConfigError::InvalidGameServerBaseUrlScheme {
+                region_entry: region_entry.clone(),
+                scheme: parsed_game_server_base_url.scheme().to_string(),
+            });
+        }
         let parsed_game_server_ws_url = url::Url::parse(&game_server_ws_url).map_err(|source| {
             SharedRegionConfigError::InvalidGameServerWsUrl {
                 region_entry: region_entry.clone(),
@@ -476,6 +497,29 @@ game_server_ws_url = "ws://localhost:3001/ws"
         assert!(matches!(
             result,
             Err(SharedRegionConfigError::InvalidGameServerBaseUrl { .. })
+        ));
+    }
+
+    #[test]
+    fn load_shared_region_config_rejects_non_http_game_server_base_urls() {
+        let path = write_temp_config(
+            "invalid-base-scheme",
+            r#"
+[regions.eu_west]
+matchmaking_key = "eu-west"
+game_server_base_url = "ftp://localhost:3001"
+game_server_ws_url = "ws://localhost:3001/ws"
+"#,
+        );
+
+        let result = load_shared_region_config(&path);
+
+        assert!(matches!(
+            result,
+            Err(SharedRegionConfigError::InvalidGameServerBaseUrlScheme {
+                region_entry,
+                scheme,
+            }) if region_entry == "eu_west" && scheme == "ftp"
         ));
     }
 
