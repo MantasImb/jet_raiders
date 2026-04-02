@@ -135,6 +135,14 @@ the same in-memory critical section so partially matched state is not exposed.
 - Head service for client entry and validation.
 - In-memory queue storage (current implementation).
 
+## Shared Region Catalog
+
+The repository-level shared region catalog lives at `config/regions.toml`.
+Head already uses this file for strict region-to-game-server routing.
+Matchmaking should reuse the same catalog in a follow-up change so queue-entry
+regions are validated against the same allowed concrete region set instead of
+duplicating region policy locally.
+
 ## Observability
 
 - Log ticket creation, match transitions, and cancellation with correlation IDs.

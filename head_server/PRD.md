@@ -60,9 +60,9 @@ The waiting response should remain minimal and include:
 
 The head server will also introduce a game-server routing model through a
 registry abstraction. The first implementation will be configuration-backed and
-will support a default global server plus region-specific overrides. This keeps
-regional routing inside head while allowing the implementation to evolve later
-into dynamic service discovery.
+will require explicit concrete region mappings. This keeps regional routing
+inside head while allowing the implementation to evolve later into dynamic
+service discovery without relying on implicit fallback behavior.
 
 ## User Stories
 
@@ -94,8 +94,8 @@ into dynamic service discovery.
     correct regional game server, so that regional scaling can be introduced
     without changing the client contract.
 12. As an operator, I want regional game-server routing to be configuration
-    backed at first, so that the system can work with a single global server
-    today and still support regional expansion later.
+    backed at first, so that the system can declare each supported region
+    explicitly and still support regional expansion later.
 13. As a backend developer, I want clean separation between orchestration,
     transport mapping, and service clients, so that the head server remains
     aligned with repository clean-architecture rules.
@@ -156,9 +156,10 @@ into dynamic service discovery.
   - region key
   - internal base URL for head-to-game-server API calls
   - public WebSocket URL returned to the client
-  - default fallback server when no exact region match exists
-- The initial deployment can point all regions to the current single global
-  game server.
+- Unknown regions must fail handoff rather than falling back to an implicit
+  default route.
+- The initial deployment can point multiple explicit regions to the current
+  single game server.
 - Head also needs a game-server client module that creates lobbies on the
   selected game server.
 - The existing game-server lobby creation flow already supports head-driven
@@ -220,7 +221,7 @@ into dynamic service discovery.
   - cancel matchmaking delegates correctly to matchmaking
   - queue entry response preserves `ticket_id` and `region` when waiting
   - queue entry response surfaces immediate matched outcomes cleanly
-  - missing regional mapping falls back to the default game server
+  - unknown regional mapping surfaces a handoff error instead of fallback
   - duplicate lobby create (`409`) is treated as successful retry-safe handoff
   - lobby creation failure prevents a successful matched response and retries
     on later matched requests
