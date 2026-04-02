@@ -140,6 +140,8 @@ the same in-memory critical section so partially matched state is not exposed.
 The repository-level shared region catalog lives at `config/regions.toml`.
 Both head and matchmaking now load this file at startup via
 `REGION_CONFIG_PATH` or the default `../config/regions.toml`.
+For production deployments, set `REGION_CONFIG_PATH` explicitly so startup does
+not depend on process working directory layout.
 
 Matchmaking uses the catalog to validate queue-entry `region` values against
 the declared concrete `matchmaking_key` set before storing ticket or match

@@ -156,10 +156,14 @@ pub fn load_matchmaking_server_config(env: &impl EnvSource) -> MatchmakingServer
         region_config_path: env
             .get_var("REGION_CONFIG_PATH")
             .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                Path::new(env!("CARGO_MANIFEST_DIR")).join("../config/regions.toml")
-            }),
+            .unwrap_or_else(default_region_config_path),
     }
+}
+
+fn default_region_config_path() -> PathBuf {
+    std::env::current_dir()
+        .expect("current working directory should be readable")
+        .join("../config/regions.toml")
 }
 
 pub fn load_shared_region_catalog(
@@ -299,15 +303,31 @@ mod tests {
         std::env::temp_dir().join(format!("matchmaking-server-{label}-{nanos}.toml"))
     }
 
-    fn write_temp_config(label: &str, contents: &str) -> PathBuf {
-        let path = temp_config_path(label);
-        std::fs::write(&path, contents).expect("temporary config should be written");
-        path
+    struct TempConfigFile {
+        path: PathBuf,
+    }
+
+    impl TempConfigFile {
+        fn new(label: &str, contents: &str) -> Self {
+            let path = temp_config_path(label);
+            std::fs::write(&path, contents).expect("temporary config should be written");
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TempConfigFile {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.path);
+        }
     }
 
     #[test]
     fn load_shared_region_catalog_reads_concrete_regions() {
-        let path = write_temp_config(
+        let config_file = TempConfigFile::new(
             "valid-regions",
             r#"
 [regions.eu_west]
@@ -322,7 +342,7 @@ game_server_ws_url = "ws://localhost:3002/ws"
 "#,
         );
 
-        let result = load_shared_region_catalog(&path).expect("config should load");
+        let result = load_shared_region_catalog(config_file.path()).expect("config should load");
 
         assert_eq!(
             result.matchmaking_keys,
@@ -332,7 +352,7 @@ game_server_ws_url = "ws://localhost:3002/ws"
 
     #[test]
     fn load_shared_region_catalog_rejects_duplicate_matchmaking_keys() {
-        let path = write_temp_config(
+        let config_file = TempConfigFile::new(
             "duplicate-keys",
             r#"
 [regions.eu_west]
@@ -347,7 +367,7 @@ game_server_ws_url = "ws://localhost:3002/ws"
 "#,
         );
 
-        let result = load_shared_region_catalog(&path);
+        let result = load_shared_region_catalog(config_file.path());
 
         assert!(matches!(
             result,
@@ -358,7 +378,7 @@ game_server_ws_url = "ws://localhost:3002/ws"
 
     #[test]
     fn load_shared_region_catalog_rejects_mismatched_matchmaking_keys() {
-        let path = write_temp_config(
+        let config_file = TempConfigFile::new(
             "mismatched-key",
             r#"
 [regions.eu_ne]
@@ -368,7 +388,7 @@ game_server_ws_url = "ws://localhost:3001/ws"
 "#,
         );
 
-        let result = load_shared_region_catalog(&path);
+        let result = load_shared_region_catalog(config_file.path());
 
         assert!(matches!(
             result,
@@ -384,7 +404,7 @@ game_server_ws_url = "ws://localhost:3001/ws"
 
     #[test]
     fn load_shared_region_catalog_rejects_missing_required_fields() {
-        let path = write_temp_config(
+        let config_file = TempConfigFile::new(
             "missing-fields",
             r#"
 [regions.eu_west]
@@ -393,7 +413,7 @@ game_server_ws_url = "ws://localhost:3001/ws"
 "#,
         );
 
-        let result = load_shared_region_catalog(&path);
+        let result = load_shared_region_catalog(config_file.path());
 
         assert!(matches!(
             result,
@@ -404,7 +424,7 @@ game_server_ws_url = "ws://localhost:3001/ws"
 
     #[test]
     fn load_shared_region_catalog_rejects_invalid_game_server_urls() {
-        let path = write_temp_config(
+        let config_file = TempConfigFile::new(
             "invalid-urls",
             r#"
 [regions.eu_west]
@@ -414,7 +434,7 @@ game_server_ws_url = "ws://localhost:3001/ws"
 "#,
         );
 
-        let result = load_shared_region_catalog(&path);
+        let result = load_shared_region_catalog(config_file.path());
 
         assert!(matches!(
             result,
@@ -427,7 +447,7 @@ game_server_ws_url = "ws://localhost:3001/ws"
 
     #[test]
     fn load_shared_region_catalog_rejects_malformed_toml() {
-        let path = write_temp_config(
+        let config_file = TempConfigFile::new(
             "malformed-toml",
             r#"
 [regions.eu_west
@@ -437,7 +457,7 @@ game_server_ws_url = "ws://localhost:3001/ws"
 "#,
         );
 
-        let result = load_shared_region_catalog(&path);
+        let result = load_shared_region_catalog(config_file.path());
 
         assert!(matches!(
             result,
@@ -447,14 +467,14 @@ game_server_ws_url = "ws://localhost:3001/ws"
 
     #[test]
     fn load_shared_region_catalog_rejects_empty_region_set() {
-        let path = write_temp_config(
+        let config_file = TempConfigFile::new(
             "no-regions",
             r#"
 [regions]
 "#,
         );
 
-        let result = load_shared_region_catalog(&path);
+        let result = load_shared_region_catalog(config_file.path());
 
         assert!(matches!(
             result,
@@ -466,10 +486,7 @@ game_server_ws_url = "ws://localhost:3001/ws"
     fn load_matchmaking_server_config_defaults_to_repo_region_config_path() {
         let config = load_matchmaking_server_config(&TestEnv::default());
 
-        assert_eq!(
-            config.region_config_path,
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../config/regions.toml")
-        );
+        assert_eq!(config.region_config_path, default_region_config_path());
     }
 
     #[test]

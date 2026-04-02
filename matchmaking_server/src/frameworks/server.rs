@@ -46,7 +46,7 @@ pub async fn run() {
         "shared region config path configured."
     );
     let shared_region_catalog = match load_shared_region_catalog(&config.region_config_path) {
-        Ok(config) => config,
+        Ok(loaded_region_catalog) => loaded_region_catalog,
         Err(error) => {
             tracing::error!(
                 region_config_path = %config.region_config_path.display(),
