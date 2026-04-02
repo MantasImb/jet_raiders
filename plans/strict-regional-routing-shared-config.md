@@ -157,15 +157,15 @@ is not present in its loaded catalog.
 
 Acceptance criteria:
 
-- [ ] The shared config schema is documented clearly enough for
+- [x] The shared config schema is documented clearly enough for
       `matchmaking_server` to reuse later.
-- [ ] `matchmaking_server` startup loads the same shared region catalog through
+- [x] `matchmaking_server` startup loads the same shared region catalog through
       its frameworks/config layer.
-- [ ] Matchmaking queue entry rejects regions that are not declared in the
+- [x] Matchmaking queue entry rejects regions that are not declared in the
       shared catalog.
-- [ ] Matchmaking does not invent, normalize, or preserve out-of-catalog
+- [x] Matchmaking does not invent, normalize, or preserve out-of-catalog
       region values in stored ticket or match state.
-- [ ] Once matchmaking consumes the shared catalog, head's unknown-region
+- [x] Once matchmaking consumes the shared catalog, head's unknown-region
       runtime path remains as a defensive invariant check rather than a
       routinely reachable validation path.
 

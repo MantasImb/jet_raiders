@@ -1,3 +1,6 @@
+use crate::frameworks::config::{
+    ProcessEnv, load_matchmaking_server_config, load_shared_region_catalog,
+};
 use crate::frameworks::id_generator::SystemMatchIdGenerator;
 use crate::interface_adapters::routes;
 use crate::interface_adapters::state::AppState;
@@ -36,9 +39,27 @@ pub async fn run() {
     // Load .env locally; safe to ignore when not present.
     let _ = dotenvy::dotenv();
     init_tracing();
+    let config = load_matchmaking_server_config(&ProcessEnv);
+
+    tracing::debug!(
+        region_config_path = %config.region_config_path.display(),
+        "shared region config path configured."
+    );
+    let shared_region_catalog = match load_shared_region_catalog(&config.region_config_path) {
+        Ok(config) => config,
+        Err(error) => {
+            tracing::error!(
+                region_config_path = %config.region_config_path.display(),
+                error = %error,
+                "failed to load shared region config"
+            );
+            return;
+        }
+    };
 
     // Initialize the in-memory matchmaking queue.
     let state = Arc::new(AppState {
+        allowed_regions: Arc::new(shared_region_catalog.matchmaking_keys),
         matchmaker: Arc::new(Mutex::new(Matchmaker::new(Arc::new(
             SystemMatchIdGenerator,
         )))),
