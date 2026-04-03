@@ -192,6 +192,7 @@ Fatal startup exit codes:
 - `2`: database connection failed.
 - `3`: startup migrations failed.
 - `4`: service failed to bind its listener socket.
+- `5`: server runtime failed while serving requests.
 
 Session details:
 

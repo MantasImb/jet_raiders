@@ -133,6 +133,7 @@ auth_server/
 - `2`: database connection failed.
 - `3`: startup migrations failed.
 - `4`: listener bind failed.
+- `5`: server runtime failed while serving requests.
 
 ## Dependency Rule and Current Exception
 

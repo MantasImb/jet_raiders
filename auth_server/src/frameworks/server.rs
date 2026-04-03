@@ -14,6 +14,7 @@ pub enum StartupFailure {
     DatabaseConnection,
     Migration,
     Bind,
+    Serve,
 }
 
 impl StartupFailure {
@@ -23,6 +24,7 @@ impl StartupFailure {
             StartupFailure::DatabaseConnection => 2,
             StartupFailure::Migration => 3,
             StartupFailure::Bind => 4,
+            StartupFailure::Serve => 5,
         }
     }
 }
@@ -73,11 +75,10 @@ pub async fn run() -> Result<(), StartupFailure> {
     let listener = bind_listener(addr).await?;
     tracing::info!(%addr, "listening");
 
-    if let Err(e) = axum::serve(listener, app).await {
-        tracing::error!(error = %e, "server error");
-    }
-
-    Ok(())
+    axum::serve(listener, app).await.map_err(|error| {
+        tracing::error!(error = %error, "server error");
+        StartupFailure::Serve
+    })
 }
 
 fn load_database_url() -> Result<String, StartupFailure> {
@@ -121,5 +122,6 @@ mod tests {
         assert_eq!(StartupFailure::DatabaseConnection.exit_code(), 2);
         assert_eq!(StartupFailure::Migration.exit_code(), 3);
         assert_eq!(StartupFailure::Bind.exit_code(), 4);
+        assert_eq!(StartupFailure::Serve.exit_code(), 5);
     }
 }
