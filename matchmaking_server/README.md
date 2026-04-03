@@ -138,10 +138,19 @@ the same in-memory critical section so partially matched state is not exposed.
 ## Shared Region Catalog
 
 The repository-level shared region catalog lives at `config/regions.toml`.
-Head already uses this file for strict region-to-game-server routing.
-Matchmaking should reuse the same catalog in a follow-up change so queue-entry
-regions are validated against the same allowed concrete region set instead of
-duplicating region policy locally.
+Both head and matchmaking now load this file at startup via
+`REGION_CONFIG_PATH` or the default `../config/regions.toml`.
+For production deployments, set `REGION_CONFIG_PATH` explicitly so startup does
+not depend on process working directory layout.
+
+Matchmaking uses the catalog to validate queue-entry `region` values against
+the declared concrete `matchmaking_key` set before storing ticket or match
+state. Region matching is exact: the service does not trim, lowercase, alias,
+or invent region values.
+
+Startup fails fast if the shared config is missing, unreadable, malformed,
+empty, has duplicate `matchmaking_key` values, omits required fields, or
+contains invalid game-server URLs.
 
 ## Observability
 

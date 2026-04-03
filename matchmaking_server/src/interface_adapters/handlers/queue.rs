@@ -18,12 +18,14 @@ pub async fn enqueue(
     Json(request): Json<QueueRequest>,
 ) -> Result<Json<QueueResponse>, (StatusCode, Json<ErrorResponse>)> {
     if request.region.trim().is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                message: "region is required".to_string(),
-            }),
-        ));
+        return Err(bad_request("region is required"));
+    }
+
+    if !state.allowed_regions.contains(request.region.as_str()) {
+        return Err(bad_request(format!(
+            "region '{}' is not configured",
+            request.region
+        )));
     }
 
     // Convert the HTTP DTO into an application request at the adapter boundary.
@@ -47,26 +49,8 @@ pub async fn lookup_ticket(
     Path(ticket_id): Path<String>,
     query: Result<Query<TicketOwnerQuery>, QueryRejection>,
 ) -> Result<Json<QueueResponse>, (StatusCode, Json<ErrorResponse>)> {
-    if ticket_id.trim().is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                message: "ticket_id is required".to_string(),
-            }),
-        ));
-    }
-
-    let query = match query {
-        Ok(Query(query)) => query,
-        Err(_) => {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                Json(ErrorResponse {
-                    message: "player_id query parameter is required".to_string(),
-                }),
-            ))
-        }
-    };
+    validate_ticket_id(ticket_id.as_str())?;
+    let query = extract_owner_query(query)?;
 
     let outcome = {
         let matchmaker = state.matchmaker.lock().await;
@@ -96,26 +80,8 @@ pub async fn cancel_ticket(
     Path(ticket_id): Path<String>,
     query: Result<Query<TicketOwnerQuery>, QueryRejection>,
 ) -> Result<Json<QueueResponse>, (StatusCode, Json<ErrorResponse>)> {
-    if ticket_id.trim().is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                message: "ticket_id is required".to_string(),
-            }),
-        ));
-    }
-
-    let query = match query {
-        Ok(Query(query)) => query,
-        Err(_) => {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                Json(ErrorResponse {
-                    message: "player_id query parameter is required".to_string(),
-                }),
-            ))
-        }
-    };
+    validate_ticket_id(ticket_id.as_str())?;
+    let query = extract_owner_query(query)?;
 
     let outcome = {
         let mut matchmaker = state.matchmaker.lock().await;
@@ -176,6 +142,32 @@ fn map_ticket_status(status: TicketStatus) -> QueueResponse {
     }
 }
 
+fn bad_request(message: impl Into<String>) -> (StatusCode, Json<ErrorResponse>) {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(ErrorResponse {
+            message: message.into(),
+        }),
+    )
+}
+
+fn validate_ticket_id(ticket_id: &str) -> Result<(), (StatusCode, Json<ErrorResponse>)> {
+    if ticket_id.trim().is_empty() {
+        return Err(bad_request("ticket_id is required"));
+    }
+
+    Ok(())
+}
+
+fn extract_owner_query(
+    query: Result<Query<TicketOwnerQuery>, QueryRejection>,
+) -> Result<TicketOwnerQuery, (StatusCode, Json<ErrorResponse>)> {
+    match query {
+        Ok(Query(query)) => Ok(query),
+        Err(_) => Err(bad_request("player_id query parameter is required")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -208,7 +200,17 @@ mod tests {
     }
 
     fn app_state(matchmaker: Matchmaker) -> Arc<AppState> {
+        app_state_with_regions(matchmaker, &["eu-west", "us-east"])
+    }
+
+    fn app_state_with_regions(matchmaker: Matchmaker, allowed_regions: &[&str]) -> Arc<AppState> {
         Arc::new(AppState {
+            allowed_regions: Arc::new(
+                allowed_regions
+                    .iter()
+                    .map(|region| (*region).to_string())
+                    .collect(),
+            ),
             matchmaker: Arc::new(Mutex::new(matchmaker)),
         })
     }
@@ -238,6 +240,26 @@ mod tests {
         assert_eq!(result.0.match_id, None);
         assert_eq!(result.0.player_ids, None);
         assert_eq!(result.0.region, "eu-west");
+    }
+
+    #[tokio::test]
+    async fn enqueue_rejects_region_that_is_not_in_shared_catalog() {
+        let result = enqueue(
+            State(app_state_with_regions(matchmaker(), &["eu-west"])),
+            Json(QueueRequest {
+                player_id: 1,
+                player_skill: 1200,
+                region: "us-east".into(),
+            }),
+        )
+        .await;
+
+        let Err((status, Json(error))) = result else {
+            panic!("unknown region should be rejected");
+        };
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(!error.message.is_empty());
     }
 
     #[tokio::test]

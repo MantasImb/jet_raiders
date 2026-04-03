@@ -217,18 +217,18 @@ explicit and validated rather than relying on a default fallback path.
 
 ### Acceptance criteria
 
-- [ ] Head resolves game-server destination by region through a dedicated
+- [x] Head resolves game-server destination by region through a dedicated
       abstraction rather than hard-coded branching.
-- [ ] The first implementation uses a repo-level shared region config artifact
+- [x] The first implementation uses a repo-level shared region config artifact
       rather than head-local ad hoc environment mappings.
-- [ ] The matched handoff flow uses the resolved server’s internal base URL for
+- [x] The matched handoff flow uses the resolved server’s internal base URL for
       lobby creation and returns that server’s public `ws_url` to the client.
-- [ ] Region matching is exact and does not normalize or alias region strings.
-- [ ] Any shared-region-config misconfiguration fails startup rather than
+- [x] Region matching is exact and does not normalize or alias region strings.
+- [x] Any shared-region-config misconfiguration fails startup rather than
       degrading to a default route.
-- [ ] Every valid region is declared explicitly; `global` is not modeled as a
+- [x] Every valid region is declared explicitly; `global` is not modeled as a
       region.
-- [ ] Tests cover exact region resolution and startup-time config validation
+- [x] Tests cover exact region resolution and startup-time config validation
       failures.
-- [ ] The system remains demoable even when all configured regions point to the
+- [x] The system remains demoable even when all configured regions point to the
       same current global game server.
