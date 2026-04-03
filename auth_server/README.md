@@ -39,6 +39,18 @@ Code is split into clean architecture layers:
 
 Base URL (local): `http://127.0.0.1:3002`
 
+### `GET /health`
+
+Lightweight liveness endpoint for startup and container smoke checks.
+
+Success response:
+
+```json
+{
+  "status": "ok"
+}
+```
+
 ### `POST /auth/guest/init`
 
 Creates a new `guest_id`, issues a token, and persists the guest profile.
@@ -174,6 +186,14 @@ Server bind:
 
 - `0.0.0.0:3002`
 
+Fatal startup exit codes:
+
+- `1`: `DATABASE_URL` is missing.
+- `2`: database connection failed.
+- `3`: startup migrations failed.
+- `4`: service failed to bind its listener socket.
+- `5`: server runtime failed while serving requests.
+
 Session details:
 
 - TTL: `3600` seconds (1 hour).
@@ -194,6 +214,48 @@ Type note:
   of that same numeric ID.
 
 Guest profile persistence is best-effort and does not block token issuance.
+
+## Docker (Phase 1 Baseline)
+
+Build the auth image from the repository root:
+
+```bash
+docker build -t jet-raiders/auth-server:phase1 auth_server
+```
+
+Run the auth container against an external Postgres instance:
+
+```bash
+docker run --rm \
+  --name auth-server \
+  -p 3002:3002 \
+  -e DATABASE_URL="postgres://<user>:<pass>@<external-host>:5432/<db>" \
+  jet-raiders/auth-server:phase1
+```
+
+Smoke-check liveness from another terminal:
+
+```bash
+curl -sS http://127.0.0.1:3002/health
+```
+
+Expected response:
+
+```json
+{"status":"ok"}
+```
+
+Negative-path check for required database configuration:
+
+```bash
+docker run --rm --name auth-server-missing-db jet-raiders/auth-server:phase1
+echo $?
+```
+
+Expected outcome:
+
+- Logs include `DATABASE_URL must be set`.
+- Process exits with status code `1`.
 
 ## Testing
 
