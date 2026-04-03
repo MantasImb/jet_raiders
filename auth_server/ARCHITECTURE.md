@@ -19,7 +19,8 @@ The service follows four clean-architecture layers:
 - **Frameworks (`src/frameworks`)**: server bootstrap and Postgres wiring.
 
 `src/main.rs` is a thin entrypoint and delegates startup to
-`frameworks::server::run`.
+`frameworks::server::run`. On startup failure, `main` exits with an explicit
+non-zero exit code exposed by `frameworks::server::StartupFailure`.
 
 ## Directory Layout (Current)
 
@@ -120,6 +121,18 @@ auth_server/
 
 1. Use case removes the token from session store.
 2. Response returns `{ "revoked": true|false }`.
+
+### `GET /health`
+
+1. Route returns liveness payload from adapter handler.
+2. Response returns `{ "status": "ok" }` with `200`.
+
+## Startup Failure Codes (Current)
+
+- `1`: `DATABASE_URL` is missing.
+- `2`: database connection failed.
+- `3`: startup migrations failed.
+- `4`: listener bind failed.
 
 ## Dependency Rule and Current Exception
 

@@ -59,6 +59,12 @@ pub struct LogoutResponse {
     pub revoked: bool,
 }
 
+// Response payload for liveness checks.
+#[derive(Debug, Serialize)]
+pub struct HealthResponse {
+    pub status: &'static str,
+}
+
 // Simple error envelope for JSON responses.
 #[derive(Debug, Serialize)]
 pub struct ErrorResponse {

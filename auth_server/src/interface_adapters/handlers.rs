@@ -1,7 +1,7 @@
 use crate::domain::errors::AuthError;
 use crate::interface_adapters::protocol::{
     ErrorResponse, GuestInitRequest, GuestInitResponse, GuestLoginRequest, GuestLoginResponse,
-    LogoutRequest, LogoutResponse, VerifyTokenRequest, VerifyTokenResponse,
+    HealthResponse, LogoutRequest, LogoutResponse, VerifyTokenRequest, VerifyTokenResponse,
 };
 use crate::interface_adapters::state::{
     AppState, InMemorySessionStore, PostgresGuestProfileStore, SystemClock,
@@ -15,6 +15,11 @@ use uuid::Uuid;
 
 // Basic session lifetime for guest tokens (in seconds).
 const GUEST_SESSION_TTL_SECONDS: u64 = 60 * 60;
+
+// Lightweight liveness endpoint for container and runtime smoke checks.
+pub async fn health() -> Json<HealthResponse> {
+    Json(HealthResponse { status: "ok" })
+}
 
 // Handler for first-time guest identity creation.
 pub async fn guest_init(

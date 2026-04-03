@@ -1,9 +1,10 @@
-use crate::interface_adapters::handlers::{guest_init, guest_login, logout, verify_token};
+use crate::interface_adapters::handlers::{guest_init, guest_login, health, logout, verify_token};
 use crate::interface_adapters::state::AppState;
-use axum::{routing::post, Router};
+use axum::{routing::get, routing::post, Router};
 
 pub fn app(state: AppState) -> Router {
     Router::new()
+        .route("/health", get(health))
         .route("/auth/guest/init", post(guest_init))
         .route("/auth/guest", post(guest_login))
         .route("/auth/verify-token", post(verify_token))
@@ -138,6 +139,27 @@ mod tests {
         let response = app.oneshot(request).await.unwrap();
 
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn when_health_endpoint_is_called_then_returns_200_and_ok_status() {
+        let app = build_test_app();
+
+        let request = Request::builder()
+            .method("GET")
+            .uri("/health")
+            .body(Body::empty())
+            .expect("expected request to build");
+
+        let response = app.oneshot(request).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("expected response body");
+        let payload: Value = serde_json::from_slice(&body).expect("expected json body");
+        assert_eq!(payload["status"], "ok");
     }
 
     #[tokio::test]
