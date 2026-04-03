@@ -1,0 +1,29 @@
+meta {
+  name: 12 Invalid Region Uppercase Returns 400
+  type: http
+  seq: 23
+}
+
+post {
+  url: {{process.env.HEAD_URL}}/matchmaking/queue
+  body: json
+  auth: none
+}
+
+headers {
+  content-type: application/json
+}
+
+body:json {
+  {
+    "session_token": "{{player_d_session_token}}",
+    "player_skill": 1300,
+    "region": "EU-WEST"
+  }
+}
+
+tests {
+  test("exact-match validation rejects uppercase aliasing", function() {
+    expect(res.getStatus()).to.equal(400);
+  });
+}

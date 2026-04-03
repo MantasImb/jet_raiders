@@ -1,0 +1,29 @@
+meta {
+  name: 13 Invalid Region Trailing Space Returns 400
+  type: http
+  seq: 24
+}
+
+post {
+  url: {{process.env.HEAD_URL}}/matchmaking/queue
+  body: json
+  auth: none
+}
+
+headers {
+  content-type: application/json
+}
+
+body:json {
+  {
+    "session_token": "{{player_d_session_token}}",
+    "player_skill": 1300,
+    "region": "eu-west "
+  }
+}
+
+tests {
+  test("exact-match validation rejects trailing whitespace", function() {
+    expect(res.getStatus()).to.equal(400);
+  });
+}

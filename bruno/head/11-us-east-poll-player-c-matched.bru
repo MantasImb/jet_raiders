@@ -1,0 +1,32 @@
+meta {
+  name: 11 Us East Poll Player C Matched
+  type: http
+  seq: 22
+}
+
+get {
+  url: {{process.env.HEAD_URL}}/matchmaking/queue/{{player_c_us_east_ticket_id}}
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{player_c_session_token}}
+}
+
+tests {
+  test("player C polling sees the same us-east handoff result", function() {
+    const body = res.getBody();
+    const expectedWsUrl =
+      bru.getProcessEnv("EXPECTED_WS_URL_US_EAST") ||
+      bru.getProcessEnv("EXPECTED_WS_URL");
+
+    expect(res.getStatus()).to.equal(200);
+    expect(body.status).to.equal("matched");
+    expect(body.ticket_id).to.equal(bru.getVar("player_c_us_east_ticket_id"));
+    expect(body.match_id).to.equal(bru.getVar("us_east_match_id"));
+    expect(body.lobby_id).to.equal(bru.getVar("us_east_lobby_id"));
+    expect(body.region).to.equal("us-east");
+    expect(body.ws_url).to.equal(expectedWsUrl);
+  });
+}

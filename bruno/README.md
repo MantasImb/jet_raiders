@@ -33,11 +33,23 @@ matchmaking, or game-server dependencies.
 - `06-cancel-waiting-ticket.bru`
 - `07-cancel-matched-ticket-rejected.bru`
 - `08-unknown-ticket-returns-404.bru`
+- `09-us-east-enqueue-waiting-player-c.bru`
+- `10-us-east-immediate-match-player-d.bru`
+- `11-us-east-poll-player-c-matched.bru`
+- `12-invalid-region-uppercase-returns-400.bru`
+- `13-invalid-region-trailing-space-returns-400.bru`
+- `14-invalid-region-unknown-returns-400.bru`
 
 The current collection also includes setup requests for three guest sessions
 and a follow-up cancel request for the waiting-ticket flow. The matched-flow
 requests assert that head returns `ticket_id` together with `match_id`,
 `lobby_id`, `ws_url`, and `region`.
+
+The phase-5 regional additions also assert that:
+
+- `us-east` follows the same game-ready matched handoff contract as `eu-west`.
+- region matching remains exact with no case-folding, trimming, or unknown-region
+  fallback.
 
 `04-waiting-ticket-transitions-to-matched.bru` also runs
 `head/assert-lobby-visibility.mjs`, which uses the matched `ws_url`,

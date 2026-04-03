@@ -17,13 +17,13 @@ process-compose up
 - `auth-server`: runs in `auth_server` via `cargo watch -x check -x run`
 - `game-server`: runs in `game_server` via `cargo watch -x check -x run`
 - `head-server`: runs in `head_server` via `cargo watch -x check -x run`
+- `matchmaking-server`: runs in `matchmaking_server` via
+  `cargo watch -x check -x run`
 
 ## Inactive entries in config
 
-- `matchmaking-server` is currently commented out in `process-compose.yaml`,
-  even though the service has a runnable binary.
 - `website` is currently commented out and remains a placeholder.
-- Uncomment and configure these entries when you want them in the local
+- Uncomment and configure this entry when you want it in the local
   process-compose stack.
 
 ## Notes

@@ -1,0 +1,44 @@
+meta {
+  name: 10 Us East Immediate Match Player D
+  type: http
+  seq: 21
+}
+
+post {
+  url: {{process.env.HEAD_URL}}/matchmaking/queue
+  body: json
+  auth: none
+}
+
+headers {
+  content-type: application/json
+}
+
+body:json {
+  {
+    "session_token": "{{player_d_session_token}}",
+    "player_skill": 1300,
+    "region": "us-east"
+  }
+}
+
+tests {
+  test("player D gets a game-ready us-east matched response", function() {
+    const body = res.getBody();
+    const expectedWsUrl =
+      bru.getProcessEnv("EXPECTED_WS_URL_US_EAST") ||
+      bru.getProcessEnv("EXPECTED_WS_URL");
+
+    expect(res.getStatus()).to.equal(200);
+    expect(body.status).to.equal("matched");
+    expect(body.ticket_id).to.be.a("string");
+    expect(body.match_id).to.be.a("string");
+    expect(body.lobby_id).to.equal(body.match_id);
+    expect(body.region).to.equal("us-east");
+    expect(body.ws_url).to.equal(expectedWsUrl);
+
+    bru.setVar("us_east_match_id", body.match_id);
+    bru.setVar("us_east_lobby_id", body.lobby_id);
+    bru.setVar("player_d_us_east_ticket_id", body.ticket_id);
+  });
+}
