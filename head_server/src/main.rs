@@ -7,5 +7,7 @@ use frameworks::server;
 
 #[tokio::main]
 async fn main() {
-    server::run().await;
+    if let Err(failure) = server::run().await {
+        std::process::exit(failure.exit_code());
+    }
 }

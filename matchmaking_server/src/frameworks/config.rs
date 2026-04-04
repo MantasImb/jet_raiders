@@ -5,7 +5,13 @@ use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MatchmakingServerConfig {
+    pub bind_host: String,
     pub region_config_path: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MatchmakingServerConfigError {
+    MissingEnvVar(&'static str),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -151,19 +157,19 @@ impl EnvSource for ProcessEnv {
     }
 }
 
-pub fn load_matchmaking_server_config(env: &impl EnvSource) -> MatchmakingServerConfig {
-    MatchmakingServerConfig {
+pub fn load_matchmaking_server_config(
+    env: &impl EnvSource,
+) -> Result<MatchmakingServerConfig, MatchmakingServerConfigError> {
+    Ok(MatchmakingServerConfig {
+        bind_host: required_env_var(env, "MATCHMAKING_SERVER_BIND_HOST")?,
         region_config_path: env
             .get_var("REGION_CONFIG_PATH")
+            .filter(|value| !value.trim().is_empty())
             .map(PathBuf::from)
-            .unwrap_or_else(default_region_config_path),
-    }
-}
-
-fn default_region_config_path() -> PathBuf {
-    std::env::current_dir()
-        .expect("current working directory should be readable")
-        .join("../config/regions.toml")
+            .ok_or(MatchmakingServerConfigError::MissingEnvVar(
+                "REGION_CONFIG_PATH",
+            ))?,
+    })
 }
 
 pub fn load_shared_region_catalog(
@@ -265,6 +271,15 @@ fn validate_matchmaking_key(
     }
 
     Ok(())
+}
+
+fn required_env_var(
+    env: &impl EnvSource,
+    key: &'static str,
+) -> Result<String, MatchmakingServerConfigError> {
+    env.get_var(key)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(MatchmakingServerConfigError::MissingEnvVar(key))
 }
 
 #[cfg(test)]
@@ -483,22 +498,44 @@ game_server_ws_url = "ws://localhost:3001/ws"
     }
 
     #[test]
-    fn load_matchmaking_server_config_defaults_to_repo_region_config_path() {
+    fn load_matchmaking_server_config_requires_bind_host() {
         let config = load_matchmaking_server_config(&TestEnv::default());
 
-        assert_eq!(config.region_config_path, default_region_config_path());
+        assert!(matches!(
+            config,
+            Err(MatchmakingServerConfigError::MissingEnvVar(
+                "MATCHMAKING_SERVER_BIND_HOST"
+            ))
+        ));
     }
 
     #[test]
     fn load_matchmaking_server_config_uses_env_override() {
-        let config = load_matchmaking_server_config(&TestEnv::from_pairs(&[(
-            "REGION_CONFIG_PATH",
-            "/tmp/regions.custom.toml",
-        )]));
+        let config = load_matchmaking_server_config(&TestEnv::from_pairs(&[
+            ("MATCHMAKING_SERVER_BIND_HOST", "127.0.0.1"),
+            ("REGION_CONFIG_PATH", "/tmp/regions.custom.toml"),
+        ]))
+        .expect("config should load");
 
+        assert_eq!(config.bind_host, "127.0.0.1");
         assert_eq!(
             config.region_config_path,
             PathBuf::from("/tmp/regions.custom.toml")
         );
+    }
+
+    #[test]
+    fn load_matchmaking_server_config_requires_region_config_path() {
+        let config = load_matchmaking_server_config(&TestEnv::from_pairs(&[(
+            "MATCHMAKING_SERVER_BIND_HOST",
+            "127.0.0.1",
+        )]));
+
+        assert!(matches!(
+            config,
+            Err(MatchmakingServerConfigError::MissingEnvVar(
+                "REGION_CONFIG_PATH"
+            ))
+        ));
     }
 }

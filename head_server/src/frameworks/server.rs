@@ -1,6 +1,6 @@
 use crate::frameworks::auth_client::AuthClient;
 use crate::frameworks::config::{
-    load_head_server_config, load_shared_region_config, ProcessEnv,
+    HeadServerConfigError, ProcessEnv, load_head_server_config, load_shared_region_config,
 };
 use crate::frameworks::game_server_client::GameServerClient;
 use crate::frameworks::game_server_directory::StaticGameServerDirectory;
@@ -10,6 +10,27 @@ use crate::interface_adapters::state::AppState;
 use crate::use_cases::{GuestSessionService, MatchmakingService};
 use std::net::SocketAddr;
 use std::sync::Arc;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StartupFailure {
+    MissingRequiredConfig,
+    InvalidConfiguration,
+    Initialization,
+    Bind,
+    Serve,
+}
+
+impl StartupFailure {
+    pub const fn exit_code(self) -> i32 {
+        match self {
+            StartupFailure::MissingRequiredConfig => 1,
+            StartupFailure::InvalidConfiguration => 2,
+            StartupFailure::Initialization => 3,
+            StartupFailure::Bind => 4,
+            StartupFailure::Serve => 5,
+        }
+    }
+}
 
 fn init_tracing() {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
@@ -37,12 +58,17 @@ fn init_tracing() {
     }));
 }
 
-pub async fn run() {
+pub async fn run() -> Result<(), StartupFailure> {
     // Load .env locally; safe to ignore when not present.
     let _ = dotenvy::dotenv();
     init_tracing();
 
-    let config = load_head_server_config(&ProcessEnv);
+    let config = load_head_server_config(&ProcessEnv).map_err(|error| match error {
+        HeadServerConfigError::MissingEnvVar(key) => {
+            tracing::error!(env_var = key, "required environment variable is missing");
+            StartupFailure::MissingRequiredConfig
+        }
+    })?;
 
     tracing::debug!(
         auth_base_url = %config.auth_service_url,
@@ -56,7 +82,7 @@ pub async fn run() {
                 error = %error,
                 "failed to parse AUTH_SERVICE_URL"
             );
-            return;
+            return Err(StartupFailure::InvalidConfiguration);
         }
     };
 
@@ -74,7 +100,7 @@ pub async fn run() {
                 error = %error,
                 "failed to parse MATCHMAKING_SERVICE_URL"
             );
-            return;
+            return Err(StartupFailure::InvalidConfiguration);
         }
     };
 
@@ -90,7 +116,7 @@ pub async fn run() {
                 error = %error,
                 "failed to load shared region config"
             );
-            return;
+            return Err(StartupFailure::InvalidConfiguration);
         }
     };
     let game_servers = Arc::new(StaticGameServerDirectory::from_shared_region_config(
@@ -101,7 +127,7 @@ pub async fn run() {
         Ok(client) => Arc::new(client),
         Err(error) => {
             tracing::error!(?error, "failed to build game server client");
-            return;
+            return Err(StartupFailure::Initialization);
         }
     };
 
@@ -120,18 +146,40 @@ pub async fn run() {
     // Start the web server with the HTTP routes wired up.
     let app = routes::app(state);
 
-    let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
+    let addr = format!("{}:3000", config.bind_host)
+        .parse::<SocketAddr>()
+        .map_err(|error| {
+            tracing::error!(bind_host = %config.bind_host, error = %error, "invalid bind host");
+            StartupFailure::InvalidConfiguration
+        })?;
     tracing::info!(%addr, "listening");
 
     let listener = match tokio::net::TcpListener::bind(addr).await {
         Ok(listener) => listener,
         Err(error) => {
             tracing::error!(%addr, error = %error, "failed to bind");
-            return;
+            return Err(StartupFailure::Bind);
         }
     };
 
     if let Err(error) = axum::serve(listener, app).await {
         tracing::error!(error = %error, "server error");
+        return Err(StartupFailure::Serve);
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::StartupFailure;
+
+    #[test]
+    fn startup_failures_map_to_expected_exit_codes() {
+        assert_eq!(StartupFailure::MissingRequiredConfig.exit_code(), 1);
+        assert_eq!(StartupFailure::InvalidConfiguration.exit_code(), 2);
+        assert_eq!(StartupFailure::Initialization.exit_code(), 3);
+        assert_eq!(StartupFailure::Bind.exit_code(), 4);
+        assert_eq!(StartupFailure::Serve.exit_code(), 5);
     }
 }

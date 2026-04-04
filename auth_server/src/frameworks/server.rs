@@ -10,7 +10,7 @@ use tokio::sync::Mutex;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StartupFailure {
-    MissingDatabaseUrl,
+    MissingRequiredConfig,
     DatabaseConnection,
     Migration,
     Bind,
@@ -20,7 +20,7 @@ pub enum StartupFailure {
 impl StartupFailure {
     pub const fn exit_code(self) -> i32 {
         match self {
-            StartupFailure::MissingDatabaseUrl => 1,
+            StartupFailure::MissingRequiredConfig => 1,
             StartupFailure::DatabaseConnection => 2,
             StartupFailure::Migration => 3,
             StartupFailure::Bind => 4,
@@ -59,7 +59,8 @@ pub async fn run() -> Result<(), StartupFailure> {
     // Load .env locally; safe to ignore when not present.
     let _ = dotenvy::dotenv();
     init_tracing();
-    let database_url = load_database_url()?;
+    let database_url = load_required_env_var("DATABASE_URL")?;
+    let bind_host = load_required_env_var("AUTH_SERVER_BIND_HOST")?;
     let db = initialize_database(&database_url).await?;
 
     // Shared, in-memory store for guest sessions.
@@ -71,7 +72,12 @@ pub async fn run() -> Result<(), StartupFailure> {
     // Wire routes for the guest-only auth flow.
     let app = app(state);
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], 3002));
+    let addr = format!("{bind_host}:3002")
+        .parse::<SocketAddr>()
+        .map_err(|error| {
+            tracing::error!(bind_host = %bind_host, error = %error, "invalid AUTH_SERVER_BIND_HOST");
+            StartupFailure::Bind
+        })?;
     let listener = bind_listener(addr).await?;
     tracing::info!(%addr, "listening");
 
@@ -81,14 +87,11 @@ pub async fn run() -> Result<(), StartupFailure> {
     })
 }
 
-fn load_database_url() -> Result<String, StartupFailure> {
-    match std::env::var("DATABASE_URL") {
-        Ok(value) => Ok(value),
-        Err(_) => {
-            tracing::error!("DATABASE_URL must be set");
-            Err(StartupFailure::MissingDatabaseUrl)
-        }
-    }
+fn load_required_env_var(key: &'static str) -> Result<String, StartupFailure> {
+    std::env::var(key).map_err(|_| {
+        tracing::error!(env_var = key, "required environment variable must be set");
+        StartupFailure::MissingRequiredConfig
+    })
 }
 
 async fn initialize_database(database_url: &str) -> Result<PgPool, StartupFailure> {
@@ -118,7 +121,7 @@ mod tests {
 
     #[test]
     fn when_startup_failure_is_mapped_then_expected_exit_code_is_used() {
-        assert_eq!(StartupFailure::MissingDatabaseUrl.exit_code(), 1);
+        assert_eq!(StartupFailure::MissingRequiredConfig.exit_code(), 1);
         assert_eq!(StartupFailure::DatabaseConnection.exit_code(), 2);
         assert_eq!(StartupFailure::Migration.exit_code(), 3);
         assert_eq!(StartupFailure::Bind.exit_code(), 4);

@@ -97,9 +97,7 @@ impl LobbyHandle {
     /// Removes the player connection only if this connection still owns it.
     pub async fn unregister_player_connection_if_owner(&self, player_id: u64, token: u64) {
         let mut map = self.active_player_connections.lock().await;
-        let is_owner = map
-            .get(&player_id)
-            .is_some_and(|slot| slot.token == token);
+        let is_owner = map.get(&player_id).is_some_and(|slot| slot.token == token);
         if is_owner {
             map.remove(&player_id);
         }

@@ -6,9 +6,15 @@ use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HeadServerConfig {
+    pub bind_host: String,
     pub auth_service_url: String,
     pub matchmaking_service_url: String,
     pub region_config_path: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HeadServerConfigError {
+    MissingEnvVar(&'static str),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -167,8 +173,11 @@ pub fn load_shared_region_config(
     parse_shared_region_config(&raw)
 }
 
-pub fn load_head_server_config(env: &impl EnvSource) -> HeadServerConfig {
-    HeadServerConfig {
+pub fn load_head_server_config(
+    env: &impl EnvSource,
+) -> Result<HeadServerConfig, HeadServerConfigError> {
+    Ok(HeadServerConfig {
+        bind_host: required_env_var(env, "HEAD_SERVER_BIND_HOST")?,
         auth_service_url: env
             .get_var("AUTH_SERVICE_URL")
             .unwrap_or_else(|| "http://localhost:3002".into()),
@@ -177,11 +186,10 @@ pub fn load_head_server_config(env: &impl EnvSource) -> HeadServerConfig {
             .unwrap_or_else(|| "http://localhost:3003".into()),
         region_config_path: env
             .get_var("REGION_CONFIG_PATH")
+            .filter(|value| !value.trim().is_empty())
             .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                Path::new(env!("CARGO_MANIFEST_DIR")).join("../config/regions.toml")
-            }),
-    }
+            .ok_or(HeadServerConfigError::MissingEnvVar("REGION_CONFIG_PATH"))?,
+    })
 }
 
 fn parse_shared_region_config(raw: &str) -> Result<SharedRegionConfig, SharedRegionConfigError> {
@@ -210,12 +218,13 @@ fn parse_shared_region_config(raw: &str) -> Result<SharedRegionConfig, SharedReg
             "game_server_ws_url",
         )?;
 
-        let parsed_game_server_base_url = url::Url::parse(&game_server_base_url).map_err(|source| {
-            SharedRegionConfigError::InvalidGameServerBaseUrl {
-                region_entry: region_entry.clone(),
-                source,
-            }
-        })?;
+        let parsed_game_server_base_url =
+            url::Url::parse(&game_server_base_url).map_err(|source| {
+                SharedRegionConfigError::InvalidGameServerBaseUrl {
+                    region_entry: region_entry.clone(),
+                    source,
+                }
+            })?;
         // Lobby creation uses this URL as an HTTP endpoint, so startup must reject
         // syntactically valid but unsupported schemes before runtime handoff fails.
         if !matches!(parsed_game_server_base_url.scheme(), "http" | "https") {
@@ -284,6 +293,15 @@ fn validate_matchmaking_key(
     }
 
     Ok(())
+}
+
+fn required_env_var(
+    env: &impl EnvSource,
+    key: &'static str,
+) -> Result<String, HeadServerConfigError> {
+    env.get_var(key)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(HeadServerConfigError::MissingEnvVar(key))
 }
 
 #[cfg(test)]
@@ -547,21 +565,22 @@ game_server_ws_url = "http://localhost:3001/ws"
     }
 
     #[test]
-    fn load_head_server_config_uses_defaults_when_env_is_unset() {
+    fn load_head_server_config_requires_bind_host_and_region_config_path() {
         let env = TestEnv::default();
         let config = load_head_server_config(&env);
 
-        assert_eq!(config.auth_service_url, "http://localhost:3002");
-        assert_eq!(config.matchmaking_service_url, "http://localhost:3003");
-        assert_eq!(
-            config.region_config_path,
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../config/regions.toml")
-        );
+        assert!(matches!(
+            config,
+            Err(HeadServerConfigError::MissingEnvVar(
+                "HEAD_SERVER_BIND_HOST"
+            ))
+        ));
     }
 
     #[test]
     fn load_head_server_config_reads_env_overrides() {
         let env = TestEnv::from_pairs(&[
+            ("HEAD_SERVER_BIND_HOST", "127.0.0.1"),
             ("AUTH_SERVICE_URL", "http://auth.internal:9000"),
             (
                 "MATCHMAKING_SERVICE_URL",
@@ -570,8 +589,9 @@ game_server_ws_url = "http://localhost:3001/ws"
             ("REGION_CONFIG_PATH", "/tmp/regions.custom.toml"),
         ]);
 
-        let config = load_head_server_config(&env);
+        let config = load_head_server_config(&env).expect("config should load");
 
+        assert_eq!(config.bind_host, "127.0.0.1");
         assert_eq!(config.auth_service_url, "http://auth.internal:9000");
         assert_eq!(
             config.matchmaking_service_url,
@@ -581,5 +601,16 @@ game_server_ws_url = "http://localhost:3001/ws"
             config.region_config_path,
             PathBuf::from("/tmp/regions.custom.toml")
         );
+    }
+
+    #[test]
+    fn load_head_server_config_requires_region_config_path() {
+        let env = TestEnv::from_pairs(&[("HEAD_SERVER_BIND_HOST", "127.0.0.1")]);
+        let config = load_head_server_config(&env);
+
+        assert!(matches!(
+            config,
+            Err(HeadServerConfigError::MissingEnvVar("REGION_CONFIG_PATH"))
+        ));
     }
 }

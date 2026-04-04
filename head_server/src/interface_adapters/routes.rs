@@ -1,4 +1,5 @@
 use crate::interface_adapters::handlers::guest::{guest_init, guest_login};
+use crate::interface_adapters::handlers::health::health;
 use crate::interface_adapters::handlers::matchmaking::{
     cancel_matchmaking, enter_matchmaking, poll_matchmaking,
 };
@@ -12,6 +13,7 @@ use std::sync::Arc;
 pub fn app(state: Arc<AppState>) -> Router {
     // Wire the HTTP routes to their handlers.
     Router::new()
+        .route("/health", get(health))
         .route("/guest/init", post(guest_init))
         .route("/guest/login", post(guest_login))
         .route("/matchmaking/queue", post(enter_matchmaking))

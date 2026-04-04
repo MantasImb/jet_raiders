@@ -8,5 +8,7 @@ use frameworks::server;
 #[tokio::main]
 async fn main() {
     // Delegate to the server framework entry point.
-    server::run().await;
+    if let Err(failure) = server::run().await {
+        std::process::exit(failure.exit_code());
+    }
 }
