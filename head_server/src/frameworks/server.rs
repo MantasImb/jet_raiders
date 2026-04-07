@@ -8,6 +8,7 @@ use crate::frameworks::matchmaking_client::MatchmakingClient;
 use crate::interface_adapters::routes;
 use crate::interface_adapters::state::AppState;
 use crate::use_cases::{GuestSessionService, MatchmakingService};
+use reqwest::{Client, Url};
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -69,6 +70,14 @@ pub async fn run() -> Result<(), StartupFailure> {
             StartupFailure::MissingRequiredConfig
         }
     })?;
+    let startup_http = Client::new();
+    check_upstream_health(&startup_http, &config.auth_service_url, "auth").await?;
+    check_upstream_health(
+        &startup_http,
+        &config.matchmaking_service_url,
+        "matchmaking",
+    )
+    .await?;
 
     tracing::debug!(
         auth_base_url = %config.auth_service_url,
@@ -170,9 +179,60 @@ pub async fn run() -> Result<(), StartupFailure> {
     Ok(())
 }
 
+async fn check_upstream_health(
+    http: &Client,
+    base_url: &str,
+    service_name: &'static str,
+) -> Result<(), StartupFailure> {
+    let mut health_url = Url::parse(base_url).map_err(|error| {
+        tracing::error!(
+            upstream = service_name,
+            base_url = %base_url,
+            error = %error,
+            "failed to parse upstream URL for startup health check"
+        );
+        StartupFailure::InvalidConfiguration
+    })?;
+    health_url.set_path("/health");
+    health_url.set_query(None);
+    health_url.set_fragment(None);
+
+    let response = http.get(health_url.clone()).send().await.map_err(|error| {
+        tracing::error!(
+            upstream = service_name,
+            health_url = %health_url,
+            error = %error,
+            "upstream health check request failed"
+        );
+        StartupFailure::Initialization
+    })?;
+    let status = response.status();
+    if !status.is_success() {
+        tracing::error!(
+            upstream = service_name,
+            health_url = %health_url,
+            status = %status,
+            "upstream health check returned non-success status"
+        );
+        return Err(StartupFailure::Initialization);
+    }
+
+    tracing::info!(
+        upstream = service_name,
+        health_url = %health_url,
+        status = %status,
+        "upstream health check passed"
+    );
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::StartupFailure;
+    use super::{StartupFailure, check_upstream_health};
+    use axum::{Json, Router, http::StatusCode, routing::get};
+    use reqwest::Client;
+    use serde_json::json;
+    use tokio::net::TcpListener;
 
     #[test]
     fn startup_failures_map_to_expected_exit_codes() {
@@ -181,5 +241,43 @@ mod tests {
         assert_eq!(StartupFailure::Initialization.exit_code(), 3);
         assert_eq!(StartupFailure::Bind.exit_code(), 4);
         assert_eq!(StartupFailure::Serve.exit_code(), 5);
+    }
+
+    async fn spawn_test_server(router: Router) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let address = listener.local_addr().expect("address should be available");
+
+        tokio::spawn(async move {
+            axum::serve(listener, router)
+                .await
+                .expect("test server should run");
+        });
+
+        format!("http://{address}")
+    }
+
+    #[tokio::test]
+    async fn upstream_health_check_passes_on_successful_response() {
+        let router = Router::new().route(
+            "/health",
+            get(|| async { (StatusCode::OK, Json(json!({ "status": "ok" }))) }),
+        );
+        let base_url = spawn_test_server(router).await;
+
+        let result = check_upstream_health(&Client::new(), &base_url, "auth").await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn upstream_health_check_fails_on_non_success_response() {
+        let router = Router::new().route("/health", get(|| async { StatusCode::BAD_GATEWAY }));
+        let base_url = spawn_test_server(router).await;
+
+        let result = check_upstream_health(&Client::new(), &base_url, "matchmaking").await;
+
+        assert_eq!(result, Err(StartupFailure::Initialization));
     }
 }
