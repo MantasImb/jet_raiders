@@ -65,6 +65,29 @@ fn init_runtime() {
 }
 
 pub async fn run(listener: tokio::net::TcpListener) -> IoResult<()> {
+    let runtime_config = config::load_runtime_config(&ProcessEnv).map_err(|error| match error {
+        GameServerConfigError::MissingEnvVar(key) => std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("missing required environment variable: {key}"),
+        ),
+        GameServerConfigError::InvalidEnvVar { key, value } => std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("invalid environment variable {key}={value}"),
+        ),
+    })?;
+    let state = build_state_with_auth_config(
+        runtime_config.auth_service_url,
+        runtime_config.auth_verify_timeout,
+    )
+    .await?;
+    run_with_state(listener, state).await
+}
+
+/// Test-only compatibility entrypoint that bypasses runtime-config validation.
+///
+/// This preserves existing integration tests that spawn an ephemeral listener
+/// and only need the server loop plus default auth client settings.
+pub async fn run_for_tests(listener: tokio::net::TcpListener) -> IoResult<()> {
     let state =
         build_state_with_auth_config(config::auth_service_url(), config::auth_verify_timeout())
             .await?;
