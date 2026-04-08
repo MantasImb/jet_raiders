@@ -8,7 +8,6 @@ WORKDIR /app
 # Copy the service crate from the monorepo root context.
 COPY game_server/Cargo.toml game_server/Cargo.lock ./game_server/
 COPY game_server/src ./game_server/src
-COPY game_server/tests ./game_server/tests
 
 WORKDIR /app/game_server
 RUN cargo build --release --locked

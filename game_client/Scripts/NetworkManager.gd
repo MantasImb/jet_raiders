@@ -13,8 +13,8 @@ enum ConnectionState {
 @onready var world_sync: WorldSync = $WorldSync
 @onready var game_manager: GameManager = $"../GameManager"
 
-const HEAD_BASE_URL= "https://headserver-production.up.railway.app"
-const TEST_SERVER_URL= "https://gameservereu-production.up.railway.app:3001"
+const HEAD_BASE_URL = "https://headserver-production.up.railway.app"
+const TEST_SERVER_URL = "wss://gameservereu-production.up.railway.app/ws"
 # will be assigned when the head server provides the game server URL
 var game_server_url: String
 var lobby_id: String

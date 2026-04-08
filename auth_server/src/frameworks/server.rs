@@ -88,10 +88,16 @@ pub async fn run() -> Result<(), StartupFailure> {
 }
 
 fn load_required_env_var(key: &'static str) -> Result<String, StartupFailure> {
-    std::env::var(key).map_err(|_| {
-        tracing::error!(env_var = key, "required environment variable must be set");
-        StartupFailure::MissingRequiredConfig
-    })
+    match std::env::var(key) {
+        Ok(value) if !value.trim().is_empty() => Ok(value),
+        _ => {
+            tracing::error!(
+                env_var = key,
+                "required environment variable must be set and non-empty"
+            );
+            Err(StartupFailure::MissingRequiredConfig)
+        }
+    }
 }
 
 async fn initialize_database(database_url: &str) -> Result<PgPool, StartupFailure> {

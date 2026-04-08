@@ -13,6 +13,7 @@ pub struct GameServerRuntimeConfig {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GameServerConfigError {
     MissingEnvVar(&'static str),
+    InvalidEnvVar { key: &'static str, value: String },
 }
 
 pub trait EnvSource {
@@ -30,17 +31,12 @@ impl EnvSource for ProcessEnv {
 pub fn load_runtime_config(
     env: &impl EnvSource,
 ) -> Result<GameServerRuntimeConfig, GameServerConfigError> {
-    let auth_verify_timeout_millis = env
-        .get_var("AUTH_VERIFY_TIMEOUT_MS")
-        .and_then(|value| value.parse::<u64>().ok())
-        .unwrap_or(1500);
+    let auth_verify_timeout_millis =
+        parse_optional_u64(env, "AUTH_VERIFY_TIMEOUT_MS")?.unwrap_or(1500);
 
     Ok(GameServerRuntimeConfig {
         bind_host: required_env_var(env, "GAME_SERVER_BIND_HOST")?,
-        http_port: env
-            .get_var("GAME_SERVER_PORT")
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(3001),
+        http_port: parse_optional_u16(env, "GAME_SERVER_PORT")?.unwrap_or(3001),
         auth_service_url: env
             .get_var("AUTH_SERVICE_URL")
             .unwrap_or_else(|| "http://127.0.0.1:3002".to_string()),
@@ -72,8 +68,53 @@ fn required_env_var(
     key: &'static str,
 ) -> Result<String, GameServerConfigError> {
     env.get_var(key)
-        .filter(|value| !value.trim().is_empty())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
         .ok_or(GameServerConfigError::MissingEnvVar(key))
+}
+
+fn parse_optional_u16(
+    env: &impl EnvSource,
+    key: &'static str,
+) -> Result<Option<u16>, GameServerConfigError> {
+    match env.get_var(key) {
+        Some(value) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                return Ok(None);
+            }
+            trimmed
+                .parse::<u16>()
+                .map(Some)
+                .map_err(|_| GameServerConfigError::InvalidEnvVar {
+                    key,
+                    value: value.to_string(),
+                })
+        }
+        None => Ok(None),
+    }
+}
+
+fn parse_optional_u64(
+    env: &impl EnvSource,
+    key: &'static str,
+) -> Result<Option<u64>, GameServerConfigError> {
+    match env.get_var(key) {
+        Some(value) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                return Ok(None);
+            }
+            trimmed
+                .parse::<u64>()
+                .map(Some)
+                .map_err(|_| GameServerConfigError::InvalidEnvVar {
+                    key,
+                    value: value.to_string(),
+                })
+        }
+        None => Ok(None),
+    }
 }
 pub const INPUT_CHANNEL_CAPACITY: usize = 1024;
 pub const WORLD_BROADCAST_CAPACITY: usize = 128;
@@ -124,7 +165,7 @@ mod tests {
     #[test]
     fn load_runtime_config_reads_env_and_defaults() {
         let config = load_runtime_config(&TestEnv::from_pairs(&[
-            ("GAME_SERVER_BIND_HOST", "127.0.0.1"),
+            ("GAME_SERVER_BIND_HOST", " 127.0.0.1 "),
             ("GAME_SERVER_PORT", "5001"),
             ("AUTH_SERVICE_URL", "http://auth.internal:9000"),
             ("AUTH_VERIFY_TIMEOUT_MS", "3200"),
@@ -135,5 +176,32 @@ mod tests {
         assert_eq!(config.http_port, 5001);
         assert_eq!(config.auth_service_url, "http://auth.internal:9000");
         assert_eq!(config.auth_verify_timeout, Duration::from_millis(3200));
+    }
+
+    #[test]
+    fn load_runtime_config_rejects_invalid_numeric_env_values() {
+        let invalid_port = load_runtime_config(&TestEnv::from_pairs(&[
+            ("GAME_SERVER_BIND_HOST", "127.0.0.1"),
+            ("GAME_SERVER_PORT", "not-a-port"),
+        ]));
+        assert!(matches!(
+            invalid_port,
+            Err(GameServerConfigError::InvalidEnvVar {
+                key: "GAME_SERVER_PORT",
+                ..
+            })
+        ));
+
+        let invalid_timeout = load_runtime_config(&TestEnv::from_pairs(&[
+            ("GAME_SERVER_BIND_HOST", "127.0.0.1"),
+            ("AUTH_VERIFY_TIMEOUT_MS", "oops"),
+        ]));
+        assert!(matches!(
+            invalid_timeout,
+            Err(GameServerConfigError::InvalidEnvVar {
+                key: "AUTH_VERIFY_TIMEOUT_MS",
+                ..
+            })
+        ));
     }
 }

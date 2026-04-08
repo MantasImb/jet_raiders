@@ -65,10 +65,12 @@ fn init_runtime() {
 }
 
 pub async fn run(listener: tokio::net::TcpListener) -> IoResult<()> {
-    let address = listener.local_addr()?;
-    // build state
     let state = build_state().await?;
-    // Start the Web Server
+    run_with_state(listener, state).await
+}
+
+async fn run_with_state(listener: tokio::net::TcpListener, state: Arc<AppState>) -> IoResult<()> {
+    let address = listener.local_addr()?;
     let app = Router::new()
         .route("/health", get(health))
         .route("/ws", get(ws_handler))
@@ -90,6 +92,14 @@ pub async fn run_with_config() -> std::result::Result<(), StartupFailure> {
         GameServerConfigError::MissingEnvVar(key) => {
             tracing::error!(env_var = key, "required environment variable is missing");
             StartupFailure::MissingRequiredConfig
+        }
+        GameServerConfigError::InvalidEnvVar { key, value } => {
+            tracing::error!(
+                env_var = key,
+                value = %value,
+                "environment variable has invalid numeric value"
+            );
+            StartupFailure::InvalidConfiguration
         }
     })?;
 
@@ -113,7 +123,12 @@ pub async fn run_with_config() -> std::result::Result<(), StartupFailure> {
         })
         .map_err(|_| StartupFailure::Bind)?;
 
-    run(listener).await.map_err(|error| {
+    let state = build_state().await.map_err(|error| {
+        tracing::error!(error = %error, "failed to initialize game server state");
+        StartupFailure::Initialization
+    })?;
+
+    run_with_state(listener, state).await.map_err(|error| {
         tracing::error!(error = %error, "server error");
         StartupFailure::Serve
     })
