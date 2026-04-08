@@ -37,9 +37,7 @@ pub fn load_runtime_config(
     Ok(GameServerRuntimeConfig {
         bind_host: required_env_var(env, "GAME_SERVER_BIND_HOST")?,
         http_port: parse_optional_u16(env, "GAME_SERVER_PORT")?.unwrap_or(3001),
-        auth_service_url: env
-            .get_var("AUTH_SERVICE_URL")
-            .unwrap_or_else(|| "http://127.0.0.1:3002".to_string()),
+        auth_service_url: required_env_var(env, "AUTH_SERVICE_URL")?,
         auth_verify_timeout: Duration::from_millis(auth_verify_timeout_millis),
     })
 }
@@ -159,6 +157,19 @@ mod tests {
             Err(GameServerConfigError::MissingEnvVar(
                 "GAME_SERVER_BIND_HOST"
             ))
+        ));
+    }
+
+    #[test]
+    fn load_runtime_config_requires_auth_service_url() {
+        let config = load_runtime_config(&TestEnv::from_pairs(&[(
+            "GAME_SERVER_BIND_HOST",
+            "127.0.0.1",
+        )]));
+
+        assert!(matches!(
+            config,
+            Err(GameServerConfigError::MissingEnvVar("AUTH_SERVICE_URL"))
         ));
     }
 

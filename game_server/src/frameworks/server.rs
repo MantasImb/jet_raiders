@@ -65,7 +65,9 @@ fn init_runtime() {
 }
 
 pub async fn run(listener: tokio::net::TcpListener) -> IoResult<()> {
-    let state = build_state().await?;
+    let state =
+        build_state_with_auth_config(config::auth_service_url(), config::auth_verify_timeout())
+            .await?;
     run_with_state(listener, state).await
 }
 
@@ -123,7 +125,12 @@ pub async fn run_with_config() -> std::result::Result<(), StartupFailure> {
         })
         .map_err(|_| StartupFailure::Bind)?;
 
-    let state = build_state().await.map_err(|error| {
+    let state = build_state_with_auth_config(
+        runtime_config.auth_service_url,
+        runtime_config.auth_verify_timeout,
+    )
+    .await
+    .map_err(|error| {
         tracing::error!(error = %error, "failed to initialize game server state");
         StartupFailure::Initialization
     })?;
@@ -134,9 +141,10 @@ pub async fn run_with_config() -> std::result::Result<(), StartupFailure> {
     })
 }
 
-async fn build_state() -> IoResult<Arc<AppState>> {
-    let auth_base_url = config::auth_service_url();
-    let auth_verify_timeout = config::auth_verify_timeout();
+async fn build_state_with_auth_config(
+    auth_base_url: String,
+    auth_verify_timeout: Duration,
+) -> IoResult<Arc<AppState>> {
     let auth_client = AuthClient::new(auth_base_url.clone(), auth_verify_timeout)
         .map_err(|e| std::io::Error::other(format!("failed to initialize auth client: {e}")))?;
     tracing::debug!(

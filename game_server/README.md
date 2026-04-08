@@ -17,10 +17,9 @@ session participation over WebSocket.
 ## Runtime and Configuration
 
 - Required bind host env var: `GAME_SERVER_BIND_HOST`
+- Required auth base URL env var: `AUTH_SERVICE_URL`
 - Bind address: `<GAME_SERVER_BIND_HOST>:<GAME_SERVER_PORT>`
 - Optional port env var: `GAME_SERVER_PORT` (default `3001`)
-- Optional auth base URL env var: `AUTH_SERVICE_URL` (default
-  `http://127.0.0.1:3002`)
 - Optional auth timeout env var: `AUTH_VERIFY_TIMEOUT_MS` (default `1500`)
 - Tracing controls: `RUST_LOG`, optional `LOG_FORMAT=json`
 
@@ -77,6 +76,21 @@ echo $?
 Expected outcome:
 
 - Logs include `GAME_SERVER_BIND_HOST`.
+- Process exits with status code `1`.
+
+Negative-path check for required auth endpoint config:
+
+```bash
+docker run --rm \
+  --name game-server-missing-auth-url \
+  -e GAME_SERVER_BIND_HOST=0.0.0.0 \
+  jet-raiders/game-server:phase2
+echo $?
+```
+
+Expected outcome:
+
+- Logs include `AUTH_SERVICE_URL`.
 - Process exits with status code `1`.
 
 ## Testing
