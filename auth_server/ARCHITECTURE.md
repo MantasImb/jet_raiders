@@ -129,7 +129,8 @@ auth_server/
 
 ## Startup Failure Codes (Current)
 
-- `1`: `DATABASE_URL` is missing.
+- `1`: required startup config is missing (`DATABASE_URL` or
+  `AUTH_SERVER_BIND_HOST`).
 - `2`: database connection failed.
 - `3`: startup migrations failed.
 - `4`: listener bind failed.

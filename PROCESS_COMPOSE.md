@@ -12,6 +12,35 @@ change.
 process-compose up
 ```
 
+## Local Bootstrap
+
+Before running `process-compose up`, create per-service `.env` files:
+
+```bash
+cp auth_server/.env.example auth_server/.env
+cp game_server/.env.example game_server/.env
+cp head_server/.env.example head_server/.env
+cp matchmaking_server/.env.example matchmaking_server/.env
+```
+
+Set local-first values in those files:
+
+- `auth_server/.env`
+  - `AUTH_SERVER_BIND_HOST=127.0.0.1`
+  - `DATABASE_URL=postgres://<user>:<pass>@127.0.0.1:5432/<db>`
+- `game_server/.env`
+  - `GAME_SERVER_BIND_HOST=127.0.0.1`
+  - `GAME_SERVER_PORT=3001`
+  - `AUTH_SERVICE_URL=http://127.0.0.1:3002`
+- `head_server/.env`
+  - `HEAD_SERVER_BIND_HOST=127.0.0.1`
+  - `AUTH_SERVICE_URL=http://127.0.0.1:3002`
+  - `MATCHMAKING_SERVICE_URL=http://127.0.0.1:3003`
+  - `REGION_CONFIG_PATH=../config/regions.toml`
+- `matchmaking_server/.env`
+  - `MATCHMAKING_SERVER_BIND_HOST=127.0.0.1`
+  - `REGION_CONFIG_PATH=../config/regions.toml`
+
 ## Active services
 
 - `auth-server`: runs in `auth_server` via `cargo watch -x check -x run`
