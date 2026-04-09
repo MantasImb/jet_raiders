@@ -196,7 +196,11 @@ async fn build_state_with_auth_config(
             Duration::from_secs(0),
         )
         .await
-        .expect("test lobby should initialize");
+        .map_err(|error| {
+            std::io::Error::other(format!(
+                "failed to initialize default test lobby: {error:?}"
+            ))
+        })?;
     spawn_lobby_serializer(&test_lobby);
     lobby_registry.clone().spawn_match_end_watcher(
         test_lobby.lobby_id.clone(),
