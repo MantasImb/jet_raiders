@@ -12,7 +12,7 @@ use axum::{
     Error, Json,
     extract::{
         Query, State,
-        ws::{CloseFrame, Message, Utf8Bytes, WebSocket, WebSocketUpgrade, close_code},
+        ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade, close_code},
     },
     http::StatusCode,
     response::IntoResponse,
@@ -52,8 +52,8 @@ pub struct LobbyQuery {
 
 pub async fn world_update_serializer(
     mut world_rx: broadcast::Receiver<WorldUpdate>,
-    world_bytes_tx: broadcast::Sender<Utf8Bytes>,
-    world_latest_tx: watch::Sender<Utf8Bytes>,
+    world_bytes_tx: broadcast::Sender<String>,
+    world_latest_tx: watch::Sender<String>,
 ) {
     // Serialize each world update once and broadcast the shared bytes.
     loop {
@@ -68,11 +68,9 @@ pub async fn world_update_serializer(
                     }
                 };
 
-                // Convert once and broadcast shared UTF-8 bytes to all clients.
-                let bytes = Utf8Bytes::from(txt);
-                // Store the latest bytes for lag recovery.
-                let _ = world_latest_tx.send(bytes.clone());
-                let _ = world_bytes_tx.send(bytes);
+                // Store the latest payload for lag recovery and broadcast to clients.
+                let _ = world_latest_tx.send(txt.clone());
+                let _ = world_bytes_tx.send(txt);
             }
             Err(broadcast::error::RecvError::Lagged(n)) => {
                 warn!(
@@ -243,8 +241,8 @@ struct ConnCtx {
     // Whether the connection has been registered in the lobby counter.
     pub registered: bool,
     pub input_tx: mpsc::Sender<GameEvent>,
-    pub world_bytes_rx: broadcast::Receiver<Utf8Bytes>,
-    pub world_latest_rx: watch::Receiver<Utf8Bytes>,
+    pub world_bytes_rx: broadcast::Receiver<String>,
+    pub world_latest_rx: watch::Receiver<String>,
     pub server_state_rx: watch::Receiver<ServerState>,
     pub can_spawn: bool,
     // Count lag recovery snapshots sent to this client.
@@ -843,14 +841,14 @@ async fn handle_incoming_ws(
 }
 
 async fn forward_world_bytes(
-    world_msg: Utf8Bytes,
+    world_msg: String,
     socket: &mut WebSocket,
     msgs_out: &mut u64,
     bytes_out: &mut u64,
 ) -> LoopControl {
     let bytes_len = world_msg.len();
     match socket
-        .send(Message::Text(world_msg))
+        .send(Message::Text(world_msg.into()))
         .await
         .map_err(NetError::Ws)
     {

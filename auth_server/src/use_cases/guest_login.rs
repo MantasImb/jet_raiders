@@ -3,7 +3,13 @@ use uuid::Uuid;
 use crate::domain::entities::Session;
 use crate::domain::errors::AuthError;
 use crate::domain::ports::{Clock, SessionStore};
-use crate::interface_adapters::protocol::GuestLoginRequest;
+
+// Input owned by the use-case layer for guest login/session creation.
+pub struct GuestLoginInput {
+    pub guest_id: u64,
+    pub display_name: String,
+    pub metadata: Option<serde_json::Value>,
+}
 
 // Response returned by the guest login use case.
 pub struct GuestLoginResponse {
@@ -24,10 +30,7 @@ where
     C: Clock,
     S: SessionStore,
 {
-    pub async fn execute(
-        &self,
-        payload: GuestLoginRequest,
-    ) -> Result<GuestLoginResponse, AuthError> {
+    pub async fn execute(&self, payload: GuestLoginInput) -> Result<GuestLoginResponse, AuthError> {
         if payload.guest_id == 0 {
             return Err(AuthError::InvalidGuestId);
         }
@@ -99,7 +102,7 @@ mod tests {
         };
 
         let result = use_case
-            .execute(GuestLoginRequest {
+            .execute(GuestLoginInput {
                 guest_id: 42,
                 display_name: "Pilot_42".to_string(),
                 metadata: None,
@@ -128,7 +131,7 @@ mod tests {
         };
 
         let result = use_case
-            .execute(GuestLoginRequest {
+            .execute(GuestLoginInput {
                 guest_id: 0,
                 display_name: "Pilot".to_string(),
                 metadata: None,
@@ -147,7 +150,7 @@ mod tests {
         };
 
         let result = use_case
-            .execute(GuestLoginRequest {
+            .execute(GuestLoginInput {
                 guest_id: 42,
                 display_name: "Pilot!".to_string(),
                 metadata: None,
@@ -171,7 +174,7 @@ mod tests {
         };
 
         let result = use_case
-            .execute(GuestLoginRequest {
+            .execute(GuestLoginInput {
                 guest_id: 42,
                 display_name: "Pilot".to_string(),
                 metadata: None,
@@ -190,7 +193,7 @@ mod tests {
         };
 
         let result = use_case
-            .execute(GuestLoginRequest {
+            .execute(GuestLoginInput {
                 guest_id: 42,
                 display_name: "AB".to_string(),
                 metadata: None,
@@ -209,7 +212,7 @@ mod tests {
         };
 
         let result = use_case
-            .execute(GuestLoginRequest {
+            .execute(GuestLoginInput {
                 guest_id: 42,
                 display_name: "ABC".to_string(),
                 metadata: None,
@@ -229,7 +232,7 @@ mod tests {
         };
 
         let result = use_case
-            .execute(GuestLoginRequest {
+            .execute(GuestLoginInput {
                 guest_id: 42,
                 display_name: "A".repeat(32),
                 metadata: None,
@@ -249,7 +252,7 @@ mod tests {
         };
 
         let result = use_case
-            .execute(GuestLoginRequest {
+            .execute(GuestLoginInput {
                 guest_id: 42,
                 display_name: "A".repeat(33),
                 metadata: None,
@@ -268,7 +271,7 @@ mod tests {
         };
 
         let result = use_case
-            .execute(GuestLoginRequest {
+            .execute(GuestLoginInput {
                 guest_id: 42,
                 display_name: "Ace Pilot-1_2".to_string(),
                 metadata: None,
@@ -288,7 +291,7 @@ mod tests {
         };
 
         let result = use_case
-            .execute(GuestLoginRequest {
+            .execute(GuestLoginInput {
                 guest_id: 42,
                 display_name: "Blue Falcon".to_string(),
                 metadata: None,
@@ -308,7 +311,7 @@ mod tests {
         };
 
         let result = use_case
-            .execute(GuestLoginRequest {
+            .execute(GuestLoginInput {
                 guest_id: 42,
                 display_name: "Blue Falcon ".to_string(),
                 metadata: None,
@@ -327,7 +330,7 @@ mod tests {
         };
 
         let result = use_case
-            .execute(GuestLoginRequest {
+            .execute(GuestLoginInput {
                 guest_id: 42,
                 display_name: " Blue Falcon".to_string(),
                 metadata: None,
@@ -351,7 +354,7 @@ mod tests {
         });
 
         let result = use_case
-            .execute(GuestLoginRequest {
+            .execute(GuestLoginInput {
                 guest_id: 42,
                 display_name: "Pilot".to_string(),
                 metadata: Some(metadata.clone()),
@@ -375,7 +378,7 @@ mod tests {
         };
 
         let result = use_case
-            .execute(GuestLoginRequest {
+            .execute(GuestLoginInput {
                 guest_id: 42,
                 display_name: "Pilot".to_string(),
                 metadata: None,
@@ -408,7 +411,7 @@ mod tests {
         });
 
         let result = use_case
-            .execute(GuestLoginRequest {
+            .execute(GuestLoginInput {
                 guest_id: 42,
                 display_name: "Pilot".to_string(),
                 metadata: Some(metadata.clone()),
@@ -431,7 +434,7 @@ mod tests {
         };
 
         let result = use_case
-            .execute(GuestLoginRequest {
+            .execute(GuestLoginInput {
                 guest_id: 42,
                 display_name: "Pilot".to_string(),
                 metadata: None,

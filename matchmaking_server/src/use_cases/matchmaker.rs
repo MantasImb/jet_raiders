@@ -1,5 +1,5 @@
 use std::collections::{HashMap, VecDeque};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tracing::info;
 
 // Application request for queueing a player into matchmaking.
@@ -375,6 +375,7 @@ impl TicketRecord {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
 
     #[derive(Debug, Default)]
     struct TestIdGenerator {

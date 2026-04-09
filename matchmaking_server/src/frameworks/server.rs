@@ -14,6 +14,8 @@ use tokio::sync::Mutex;
 pub enum StartupFailure {
     MissingRequiredConfig,
     InvalidConfiguration,
+    // Reserved for future startup dependency initialization failures.
+    #[allow(dead_code)]
     Initialization,
     Bind,
     Serve,

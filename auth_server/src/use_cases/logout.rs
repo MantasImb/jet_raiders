@@ -29,8 +29,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::interface_adapters::protocol::GuestLoginRequest;
-    use crate::use_cases::guest_login::GuestLoginUseCase;
+    use crate::use_cases::guest_login::{GuestLoginInput, GuestLoginUseCase};
     use crate::use_cases::test_support::{FailureFlags, FixedClock, RecordingStore};
     use crate::use_cases::verify_token::VerifyTokenUseCase;
 
@@ -114,7 +113,7 @@ mod tests {
         };
 
         let login_result = login_use_case
-            .execute(GuestLoginRequest {
+            .execute(GuestLoginInput {
                 guest_id: 42,
                 display_name: "Pilot".to_string(),
                 metadata: None,
