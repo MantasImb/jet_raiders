@@ -130,11 +130,13 @@ auth_server/
 ## Startup Failure Codes (Current)
 
 - `1`: required startup config is missing (`DATABASE_URL` or
-  `AUTH_SERVER_BIND_HOST`).
-- `2`: database connection failed.
-- `3`: startup migrations failed.
-- `4`: listener bind failed.
-- `5`: server runtime failed while serving requests.
+  `AUTH_SERVER_BIND_HOST` or `BACKEND_PORTS_CONFIG_PATH` when override is not
+  set).
+- `2`: startup config is invalid.
+- `3`: database connection failed.
+- `4`: startup migrations failed.
+- `5`: listener bind failed.
+- `6`: server runtime failed while serving requests.
 
 ## Dependency Rule Status
 

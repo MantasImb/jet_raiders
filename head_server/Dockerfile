@@ -26,6 +26,7 @@ WORKDIR /app
 
 COPY --from=builder /app/head_server/target/release/head_server /usr/local/bin/head_server
 COPY --from=builder /app/config/regions.toml /app/config/regions.toml
+COPY --from=builder /app/config/backend_ports.toml /app/config/backend_ports.toml
 
 EXPOSE 3000
 

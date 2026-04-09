@@ -68,6 +68,35 @@ pub async fn run() -> Result<(), StartupFailure> {
             tracing::error!(env_var = key, "required environment variable is missing");
             StartupFailure::MissingRequiredConfig
         }
+        MatchmakingServerConfigError::InvalidEnvVar { key, value } => {
+            tracing::error!(
+                env_var = key,
+                value = %value,
+                "environment variable has invalid numeric value"
+            );
+            StartupFailure::InvalidConfiguration
+        }
+        MatchmakingServerConfigError::ReadPortsConfig(path) => {
+            tracing::error!(
+                backend_ports_config_path = %path.display(),
+                "failed to read backend ports config"
+            );
+            StartupFailure::InvalidConfiguration
+        }
+        MatchmakingServerConfigError::ParsePortsConfig(path) => {
+            tracing::error!(
+                backend_ports_config_path = %path.display(),
+                "failed to parse backend ports config"
+            );
+            StartupFailure::InvalidConfiguration
+        }
+        MatchmakingServerConfigError::MissingPortsConfigKey(key) => {
+            tracing::error!(
+                config_key = key,
+                "backend ports config is missing required key"
+            );
+            StartupFailure::InvalidConfiguration
+        }
     })?;
 
     tracing::debug!(
@@ -97,10 +126,15 @@ pub async fn run() -> Result<(), StartupFailure> {
     // Wire the HTTP routes for the matchmaking API.
     let app = routes::app(state);
 
-    let addr = format!("{}:3003", config.bind_host)
+    let addr = format!("{}:{}", config.bind_host, config.port)
         .parse::<SocketAddr>()
         .map_err(|error| {
-            tracing::error!(bind_host = %config.bind_host, error = %error, "invalid bind host");
+            tracing::error!(
+                bind_host = %config.bind_host,
+                port = config.port,
+                error = %error,
+                "invalid bind host or port"
+            );
             StartupFailure::InvalidConfiguration
         })?;
     tracing::info!(%addr, "listening");

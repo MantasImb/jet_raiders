@@ -6,12 +6,17 @@ use std::path::{Path, PathBuf};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MatchmakingServerConfig {
     pub bind_host: String,
+    pub port: u16,
     pub region_config_path: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MatchmakingServerConfigError {
     MissingEnvVar(&'static str),
+    InvalidEnvVar { key: &'static str, value: String },
+    ReadPortsConfig(PathBuf),
+    ParsePortsConfig(PathBuf),
+    MissingPortsConfigKey(&'static str),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -145,6 +150,16 @@ struct RawRegionRoutingEntry {
     game_server_ws_url: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct BackendPortsConfig {
+    ports: RawBackendPorts,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawBackendPorts {
+    matchmaking_server: Option<u16>,
+}
+
 pub trait EnvSource {
     fn get_var(&self, key: &str) -> Option<String>;
 }
@@ -162,6 +177,7 @@ pub fn load_matchmaking_server_config(
 ) -> Result<MatchmakingServerConfig, MatchmakingServerConfigError> {
     Ok(MatchmakingServerConfig {
         bind_host: required_env_var(env, "MATCHMAKING_SERVER_BIND_HOST")?,
+        port: resolve_matchmaking_server_port(env)?,
         region_config_path: env
             .get_var("REGION_CONFIG_PATH")
             .filter(|value| !value.trim().is_empty())
@@ -280,6 +296,48 @@ fn required_env_var(
     env.get_var(key)
         .filter(|value| !value.trim().is_empty())
         .ok_or(MatchmakingServerConfigError::MissingEnvVar(key))
+}
+
+fn resolve_matchmaking_server_port(
+    env: &impl EnvSource,
+) -> Result<u16, MatchmakingServerConfigError> {
+    if let Some(value) = env.get_var("MATCHMAKING_SERVER_PORT") {
+        if value.is_empty() {
+            return resolve_port_from_catalog(env);
+        }
+
+        let override_port =
+            value
+                .parse::<u16>()
+                .map_err(|_| MatchmakingServerConfigError::InvalidEnvVar {
+                    key: "MATCHMAKING_SERVER_PORT",
+                    value: value.clone(),
+                })?;
+        tracing::warn!(
+            service = "matchmaking_server",
+            env_var = "MATCHMAKING_SERVER_PORT",
+            override_port,
+            "using service port override from environment"
+        );
+        return Ok(override_port);
+    }
+
+    resolve_port_from_catalog(env)
+}
+
+fn resolve_port_from_catalog(env: &impl EnvSource) -> Result<u16, MatchmakingServerConfigError> {
+    let backend_ports_path = required_env_var(env, "BACKEND_PORTS_CONFIG_PATH")?;
+    let backend_ports_path = PathBuf::from(backend_ports_path);
+    let raw = std::fs::read_to_string(&backend_ports_path)
+        .map_err(|_| MatchmakingServerConfigError::ReadPortsConfig(backend_ports_path.clone()))?;
+    let parsed: BackendPortsConfig = toml::from_str(&raw)
+        .map_err(|_| MatchmakingServerConfigError::ParsePortsConfig(backend_ports_path.clone()))?;
+    parsed
+        .ports
+        .matchmaking_server
+        .ok_or(MatchmakingServerConfigError::MissingPortsConfigKey(
+            "ports.matchmaking_server",
+        ))
 }
 
 #[cfg(test)]
@@ -513,11 +571,13 @@ game_server_ws_url = "ws://localhost:3001/ws"
     fn load_matchmaking_server_config_uses_env_override() {
         let config = load_matchmaking_server_config(&TestEnv::from_pairs(&[
             ("MATCHMAKING_SERVER_BIND_HOST", "127.0.0.1"),
+            ("MATCHMAKING_SERVER_PORT", "3350"),
             ("REGION_CONFIG_PATH", "/tmp/regions.custom.toml"),
         ]))
         .expect("config should load");
 
         assert_eq!(config.bind_host, "127.0.0.1");
+        assert_eq!(config.port, 3350);
         assert_eq!(
             config.region_config_path,
             PathBuf::from("/tmp/regions.custom.toml")
@@ -526,15 +586,118 @@ game_server_ws_url = "ws://localhost:3001/ws"
 
     #[test]
     fn load_matchmaking_server_config_requires_region_config_path() {
-        let config = load_matchmaking_server_config(&TestEnv::from_pairs(&[(
-            "MATCHMAKING_SERVER_BIND_HOST",
-            "127.0.0.1",
-        )]));
+        let config = load_matchmaking_server_config(&TestEnv::from_pairs(&[
+            ("MATCHMAKING_SERVER_BIND_HOST", "127.0.0.1"),
+            ("MATCHMAKING_SERVER_PORT", "3003"),
+        ]));
 
         assert!(matches!(
             config,
             Err(MatchmakingServerConfigError::MissingEnvVar(
                 "REGION_CONFIG_PATH"
+            ))
+        ));
+    }
+
+    #[test]
+    fn load_matchmaking_server_config_reads_port_from_shared_catalog() {
+        let config_file = TempConfigFile::new(
+            "matchmaking-port",
+            r#"
+[ports]
+matchmaking_server = 3450
+"#,
+        );
+        let config = load_matchmaking_server_config(&TestEnv::from_pairs(&[
+            ("MATCHMAKING_SERVER_BIND_HOST", "127.0.0.1"),
+            ("REGION_CONFIG_PATH", "/tmp/regions.custom.toml"),
+            (
+                "BACKEND_PORTS_CONFIG_PATH",
+                config_file.path().to_string_lossy().as_ref(),
+            ),
+        ]))
+        .expect("config should load");
+
+        assert_eq!(config.port, 3450);
+    }
+
+    #[test]
+    fn load_matchmaking_server_config_treats_empty_override_as_unset() {
+        let config_file = TempConfigFile::new(
+            "empty-override",
+            r#"
+[ports]
+matchmaking_server = 3550
+"#,
+        );
+        let config = load_matchmaking_server_config(&TestEnv::from_pairs(&[
+            ("MATCHMAKING_SERVER_BIND_HOST", "127.0.0.1"),
+            ("MATCHMAKING_SERVER_PORT", ""),
+            ("REGION_CONFIG_PATH", "/tmp/regions.custom.toml"),
+            (
+                "BACKEND_PORTS_CONFIG_PATH",
+                config_file.path().to_string_lossy().as_ref(),
+            ),
+        ]))
+        .expect("config should load");
+
+        assert_eq!(config.port, 3550);
+    }
+
+    #[test]
+    fn load_matchmaking_server_config_rejects_invalid_override() {
+        let config = load_matchmaking_server_config(&TestEnv::from_pairs(&[
+            ("MATCHMAKING_SERVER_BIND_HOST", "127.0.0.1"),
+            ("MATCHMAKING_SERVER_PORT", "nope"),
+            ("REGION_CONFIG_PATH", "/tmp/regions.custom.toml"),
+        ]));
+
+        assert!(matches!(
+            config,
+            Err(MatchmakingServerConfigError::InvalidEnvVar {
+                key: "MATCHMAKING_SERVER_PORT",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn load_matchmaking_server_config_requires_ports_path_without_override() {
+        let config = load_matchmaking_server_config(&TestEnv::from_pairs(&[
+            ("MATCHMAKING_SERVER_BIND_HOST", "127.0.0.1"),
+            ("REGION_CONFIG_PATH", "/tmp/regions.custom.toml"),
+        ]));
+
+        assert!(matches!(
+            config,
+            Err(MatchmakingServerConfigError::MissingEnvVar(
+                "BACKEND_PORTS_CONFIG_PATH"
+            ))
+        ));
+    }
+
+    #[test]
+    fn load_matchmaking_server_config_rejects_missing_matchmaking_port_key() {
+        let config_file = TempConfigFile::new(
+            "missing-matchmaking-key",
+            r#"
+[ports]
+auth_server = 3002
+"#,
+        );
+        let config = load_matchmaking_server_config(&TestEnv::from_pairs(&[
+            ("MATCHMAKING_SERVER_BIND_HOST", "127.0.0.1"),
+            ("REGION_CONFIG_PATH", "/tmp/regions.custom.toml"),
+            (
+                "BACKEND_PORTS_CONFIG_PATH",
+                config_file.path().to_string_lossy().as_ref(),
+            ),
+        ]));
+
+        assert!(matches!(
+            config,
+            Err(MatchmakingServerConfigError::MissingPortsConfigKey(
+                "ports.matchmaking_server"
             ))
         ));
     }

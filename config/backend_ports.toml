@@ -1,0 +1,4 @@
+[ports]
+auth_server = 3002
+head_server = 3000
+matchmaking_server = 3003

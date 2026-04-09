@@ -26,6 +26,7 @@ WORKDIR /app
 
 COPY --from=builder /app/matchmaking_server/target/release/matchmaking_server /usr/local/bin/matchmaking_server
 COPY --from=builder /app/config/regions.toml /app/config/regions.toml
+COPY --from=builder /app/config/backend_ports.toml /app/config/backend_ports.toml
 
 EXPOSE 3003
 

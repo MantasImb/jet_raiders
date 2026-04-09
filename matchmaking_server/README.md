@@ -155,7 +155,13 @@ contains invalid game-server URLs.
 ## Runtime and Configuration
 
 - Required bind host env var: `MATCHMAKING_SERVER_BIND_HOST`
-- Bind address: `<MATCHMAKING_SERVER_BIND_HOST>:3003`
+- Required backend ports config env var when `MATCHMAKING_SERVER_PORT` is not
+  set: `BACKEND_PORTS_CONFIG_PATH`
+- Bind address: `<MATCHMAKING_SERVER_BIND_HOST>:<resolved_matchmaking_port>`
+- Optional port override env var: `MATCHMAKING_SERVER_PORT` (exact empty
+  string `""` is treated as unset)
+- Port precedence: `MATCHMAKING_SERVER_PORT` override, then
+  `config/backend_ports.toml` at `BACKEND_PORTS_CONFIG_PATH`
 - Required shared region config env var: `REGION_CONFIG_PATH`
 - Tracing controls: `RUST_LOG`, optional `LOG_FORMAT=json`
 
@@ -183,6 +189,7 @@ docker run --rm \
   --name matchmaking-server \
   -p 3003:3003 \
   -e MATCHMAKING_SERVER_BIND_HOST=0.0.0.0 \
+  -e BACKEND_PORTS_CONFIG_PATH=/app/config/backend_ports.toml \
   -e REGION_CONFIG_PATH=/app/config/regions.toml \
   jet-raiders/matchmaking-server:phase2
 ```
