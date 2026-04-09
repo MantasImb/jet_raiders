@@ -129,22 +129,18 @@ auth_server/
 
 ## Startup Failure Codes (Current)
 
-- `1`: `DATABASE_URL` is missing.
+- `1`: required startup config is missing (`DATABASE_URL` or
+  `AUTH_SERVER_BIND_HOST`).
 - `2`: database connection failed.
 - `3`: startup migrations failed.
 - `4`: listener bind failed.
 - `5`: server runtime failed while serving requests.
 
-## Dependency Rule and Current Exception
+## Dependency Rule Status
 
-Dependency direction still targets inward boundaries, but one known exception is
-present today:
-
-- `use_cases/guest_login.rs` currently accepts
-  `interface_adapters::protocol::GuestLoginRequest` directly.
-
-This should be removed by introducing a use-case input type that is independent
-from adapter DTOs.
+Dependency direction follows the repository-wide clean-architecture rule:
+use-cases no longer accept adapter DTOs directly, and transport conversion
+happens in interface adapters before calling the use-case layer.
 
 ## Web3 Extension Path
 

@@ -34,7 +34,9 @@ pub fn ensure_server() -> &'static str {
                 // Publish the final base URL so test code can target the right server.
                 let _ = published_url_thread.set(format!("http://{}", addr));
                 // Start serving requests until the test process exits.
-                game_server::run(listener).await.expect("server failed");
+                game_server::run_for_tests(listener)
+                    .await
+                    .expect("server failed");
             });
         });
         // Block until URL is published and the bound port starts accepting connections.

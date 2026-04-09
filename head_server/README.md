@@ -185,6 +185,18 @@ Request header:
 Authorization: Bearer <session_token>
 ```
 
+### `GET /health`
+
+Liveness endpoint for startup and container smoke checks.
+
+Success response:
+
+```json
+{
+  "status": "ok"
+}
+```
+
 ## Error Behavior
 
 - Invalid `guest_id` format in `/guest/login` returns `400`.
@@ -201,13 +213,13 @@ Authorization: Bearer <session_token>
 
 ## Runtime and Configuration
 
-- Bind address: `127.0.0.1:3000`
+- Required bind host env var: `HEAD_SERVER_BIND_HOST`
+- Bind address: `<HEAD_SERVER_BIND_HOST>:3000`
 - Auth base URL env var: `AUTH_SERVICE_URL`
 - Default auth base URL: `http://localhost:3002`
 - Matchmaking base URL env var: `MATCHMAKING_SERVICE_URL`
 - Default matchmaking base URL: `http://localhost:3003`
-- Shared region config env var override: `REGION_CONFIG_PATH`
-- Default shared region config path: `../config/regions.toml`
+- Required shared region config env var: `REGION_CONFIG_PATH`
 - Startup fails fast if the shared region config is missing, unreadable,
   malformed, empty, has duplicate `matchmaking_key` values, omits required
   fields, or contains invalid game-server URLs.
@@ -216,10 +228,67 @@ Authorization: Bearer <session_token>
   matchmaking returns an unknown region.
 - Tracing controls: `RUST_LOG`, optional `LOG_FORMAT=json`
 
+Fatal startup exit codes:
+
+- `1`: required startup config is missing.
+- `2`: startup config is invalid.
+- `3`: startup dependency initialization failed.
+- `4`: service failed to bind its listener socket.
+- `5`: server runtime failed while serving requests.
+
 The shared config file maps concrete matchmaking region values to the internal
 game-server base URL used for lobby creation and the client-visible `ws_url`
-returned in matched responses. Local development defaults live in
-`../config/regions.toml`.
+returned in matched responses.
+
+## Docker
+
+Build the head image from the repository root:
+
+```bash
+docker build -f head_server/Dockerfile -t jet-raiders/head-server:phase2 .
+```
+
+Run the head container:
+
+```bash
+docker run --rm \
+  --name head-server \
+  -p 3000:3000 \
+  -e HEAD_SERVER_BIND_HOST=0.0.0.0 \
+  -e AUTH_SERVICE_URL="http://auth-server:3002" \
+  -e MATCHMAKING_SERVICE_URL="http://matchmaking-server:3003" \
+  -e REGION_CONFIG_PATH=/app/config/regions.toml \
+  jet-raiders/head-server:phase2
+```
+
+Smoke-check liveness from another terminal:
+
+```bash
+curl -sS http://127.0.0.1:3000/health
+```
+
+Expected response:
+
+```json
+{"status":"ok"}
+```
+
+Negative-path check for required region config:
+
+```bash
+docker run --rm \
+  --name head-server-missing-region-path \
+  -e HEAD_SERVER_BIND_HOST=0.0.0.0 \
+  -e AUTH_SERVICE_URL="http://auth-server:3002" \
+  -e MATCHMAKING_SERVICE_URL="http://matchmaking-server:3003" \
+  jet-raiders/head-server:phase2
+echo $?
+```
+
+Expected outcome:
+
+- Logs include `REGION_CONFIG_PATH`.
+- Process exits with status code `1`.
 
 ## Dependencies
 

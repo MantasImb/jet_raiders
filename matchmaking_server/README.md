@@ -100,6 +100,8 @@ the same in-memory critical section so partially matched state is not exposed.
   - Requires the owning `player_id` as a query parameter for head-scoped
     authorization.
   - Returns the canceled state for that ticket.
+- `GET /health`
+  - Liveness endpoint for startup and container smoke checks.
 
 ## Data Contracts
 
@@ -138,10 +140,8 @@ the same in-memory critical section so partially matched state is not exposed.
 ## Shared Region Catalog
 
 The repository-level shared region catalog lives at `config/regions.toml`.
-Both head and matchmaking now load this file at startup via
-`REGION_CONFIG_PATH` or the default `../config/regions.toml`.
-For production deployments, set `REGION_CONFIG_PATH` explicitly so startup does
-not depend on process working directory layout.
+Both head and matchmaking load this file at startup via required
+`REGION_CONFIG_PATH`.
 
 Matchmaking uses the catalog to validate queue-entry `region` values against
 the declared concrete `matchmaking_key` set before storing ticket or match
@@ -151,6 +151,68 @@ or invent region values.
 Startup fails fast if the shared config is missing, unreadable, malformed,
 empty, has duplicate `matchmaking_key` values, omits required fields, or
 contains invalid game-server URLs.
+
+## Runtime and Configuration
+
+- Required bind host env var: `MATCHMAKING_SERVER_BIND_HOST`
+- Bind address: `<MATCHMAKING_SERVER_BIND_HOST>:3003`
+- Required shared region config env var: `REGION_CONFIG_PATH`
+- Tracing controls: `RUST_LOG`, optional `LOG_FORMAT=json`
+
+Fatal startup exit codes:
+
+- `1`: required startup config is missing.
+- `2`: startup config is invalid.
+- `3`: startup dependency initialization failed.
+- `4`: service failed to bind its listener socket.
+- `5`: server runtime failed while serving requests.
+
+## Docker
+
+Build the matchmaking image from the repository root:
+
+```bash
+docker build -f matchmaking_server/Dockerfile \
+  -t jet-raiders/matchmaking-server:phase2 .
+```
+
+Run the matchmaking container:
+
+```bash
+docker run --rm \
+  --name matchmaking-server \
+  -p 3003:3003 \
+  -e MATCHMAKING_SERVER_BIND_HOST=0.0.0.0 \
+  -e REGION_CONFIG_PATH=/app/config/regions.toml \
+  jet-raiders/matchmaking-server:phase2
+```
+
+Smoke-check liveness from another terminal:
+
+```bash
+curl -sS http://127.0.0.1:3003/health
+```
+
+Expected response:
+
+```json
+{"status":"ok"}
+```
+
+Negative-path check for required bind-host config:
+
+```bash
+docker run --rm \
+  --name matchmaking-server-missing-bind \
+  -e REGION_CONFIG_PATH=/app/config/regions.toml \
+  jet-raiders/matchmaking-server:phase2
+echo $?
+```
+
+Expected outcome:
+
+- Logs include `MATCHMAKING_SERVER_BIND_HOST`.
+- Process exits with status code `1`.
 
 ## Observability
 

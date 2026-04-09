@@ -2,7 +2,6 @@
 
 use crate::use_cases::game::world_task;
 use crate::use_cases::{GameEvent, ServerState, WorldUpdate};
-use axum::extract::ws::Utf8Bytes;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -40,9 +39,9 @@ pub struct LobbyHandle {
     /// Broadcast sender for raw world updates.
     pub world_tx: broadcast::Sender<WorldUpdate>,
     /// Broadcast sender for serialized world updates.
-    pub world_bytes_tx: broadcast::Sender<Utf8Bytes>,
+    pub world_bytes_tx: broadcast::Sender<String>,
     /// Watch sender holding the latest serialized world update.
-    pub world_latest_tx: watch::Sender<Utf8Bytes>,
+    pub world_latest_tx: watch::Sender<String>,
     /// Watch sender for high-level server state changes.
     pub server_state_tx: watch::Sender<ServerState>,
     /// Active connections for this lobby (players + spectators).
@@ -97,9 +96,7 @@ impl LobbyHandle {
     /// Removes the player connection only if this connection still owns it.
     pub async fn unregister_player_connection_if_owner(&self, player_id: u64, token: u64) {
         let mut map = self.active_player_connections.lock().await;
-        let is_owner = map
-            .get(&player_id)
-            .is_some_and(|slot| slot.token == token);
+        let is_owner = map.get(&player_id).is_some_and(|slot| slot.token == token);
         if is_owner {
             map.remove(&player_id);
         }
@@ -158,8 +155,8 @@ impl LobbyRegistry {
         let (world_tx, _world_rx) =
             broadcast::channel::<WorldUpdate>(self.settings.world_broadcast_capacity);
         let (world_bytes_tx, _world_bytes_rx) =
-            broadcast::channel::<Utf8Bytes>(self.settings.world_broadcast_capacity);
-        let (world_latest_tx, _world_latest_rx) = watch::channel::<Utf8Bytes>(Utf8Bytes::from(""));
+            broadcast::channel::<String>(self.settings.world_broadcast_capacity);
+        let (world_latest_tx, _world_latest_rx) = watch::channel::<String>(String::new());
         let (server_state_tx, _server_state_rx) = watch::channel::<ServerState>(ServerState::Lobby);
 
         // Shutdown signal for the world task.

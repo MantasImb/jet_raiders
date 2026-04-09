@@ -6,7 +6,7 @@ use crate::interface_adapters::protocol::{
 use crate::interface_adapters::state::{
     AppState, InMemorySessionStore, PostgresGuestProfileStore, SystemClock,
 };
-use crate::use_cases::guest_login::GuestLoginUseCase;
+use crate::use_cases::guest_login::{GuestLoginInput, GuestLoginUseCase};
 use crate::use_cases::logout::LogoutUseCase;
 use crate::use_cases::verify_token::VerifyTokenUseCase;
 use axum::{extract::State, http::StatusCode, Json};
@@ -45,7 +45,7 @@ pub async fn guest_init(
     };
 
     let result = use_case
-        .execute(GuestLoginRequest {
+        .execute(GuestLoginInput {
             guest_id,
             display_name: display_name.clone(),
             metadata,
@@ -76,10 +76,14 @@ pub async fn guest_login(
     State(state): State<AppState>,
     Json(payload): Json<GuestLoginRequest>,
 ) -> Result<Json<GuestLoginResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let GuestLoginRequest {
+        guest_id,
+        display_name,
+        metadata,
+    } = payload;
+
     // Capture guest identity fields before moving the payload into the use case.
-    let guest_id = payload.guest_id;
-    let metadata_json = payload
-        .metadata
+    let metadata_json = metadata
         .as_ref()
         .map(|value| value.to_string())
         .unwrap_or_else(|| "{}".to_string());
@@ -94,7 +98,11 @@ pub async fn guest_login(
     };
 
     let result = use_case
-        .execute(payload)
+        .execute(GuestLoginInput {
+            guest_id,
+            display_name,
+            metadata,
+        })
         .await
         .map_err(|err| map_auth_error(err, AuthErrorContext::GuestLogin))?;
 

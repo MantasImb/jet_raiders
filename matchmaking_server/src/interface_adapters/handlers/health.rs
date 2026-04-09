@@ -1,13 +1,5 @@
 use axum::Json;
 
-// Shared HTTP response types for consistent API error payloads.
-
-#[derive(Debug, serde::Serialize)]
-pub struct ErrorResponse {
-    // Human-readable error string for consistent JSON error responses.
-    pub error: String,
-}
-
 #[derive(Debug, serde::Serialize, PartialEq, Eq)]
 pub struct HealthResponse {
     pub status: &'static str,

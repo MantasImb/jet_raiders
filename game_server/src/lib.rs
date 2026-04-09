@@ -5,3 +5,4 @@ pub mod use_cases;
 
 pub use frameworks::config::http_port;
 pub use frameworks::server::run;
+pub use frameworks::server::run_for_tests;

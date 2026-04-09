@@ -1,0 +1,15 @@
+meta {
+  name: 00 Health
+  type: http
+  seq: 20
+}
+
+get {
+  url: {{process.env.HEAD_URL}}/health
+  body: json
+  auth: none
+}
+
+headers {
+  content-type: application/json
+}

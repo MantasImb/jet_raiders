@@ -176,6 +176,8 @@ Domain and validation errors are returned as:
 Required environment variable:
 
 - `DATABASE_URL`: Postgres connection string.
+- `AUTH_SERVER_BIND_HOST`: listener host (for example `127.0.0.1` locally,
+  `0.0.0.0` in containers).
 
 Optional environment variables:
 
@@ -184,11 +186,12 @@ Optional environment variables:
 
 Server bind:
 
-- `0.0.0.0:3002`
+- `<AUTH_SERVER_BIND_HOST>:3002`
 
 Fatal startup exit codes:
 
-- `1`: `DATABASE_URL` is missing.
+- `1`: required startup config is missing (`DATABASE_URL` or
+  `AUTH_SERVER_BIND_HOST`).
 - `2`: database connection failed.
 - `3`: startup migrations failed.
 - `4`: service failed to bind its listener socket.
@@ -215,12 +218,12 @@ Type note:
 
 Guest profile persistence is best-effort and does not block token issuance.
 
-## Docker (Phase 1 Baseline)
+## Docker
 
 Build the auth image from the repository root:
 
 ```bash
-docker build -t jet-raiders/auth-server:phase1 auth_server
+docker build -f auth_server/Dockerfile -t jet-raiders/auth-server:phase2 .
 ```
 
 Run the auth container against an external Postgres instance:
@@ -229,8 +232,9 @@ Run the auth container against an external Postgres instance:
 docker run --rm \
   --name auth-server \
   -p 3002:3002 \
+  -e AUTH_SERVER_BIND_HOST=0.0.0.0 \
   -e DATABASE_URL="postgres://<user>:<pass>@<external-host>:5432/<db>" \
-  jet-raiders/auth-server:phase1
+  jet-raiders/auth-server:phase2
 ```
 
 Smoke-check liveness from another terminal:
@@ -245,16 +249,19 @@ Expected response:
 {"status":"ok"}
 ```
 
-Negative-path check for required database configuration:
+Negative-path check for required bind-host configuration:
 
 ```bash
-docker run --rm --name auth-server-missing-db jet-raiders/auth-server:phase1
+docker run --rm \
+  --name auth-server-missing-bind \
+  -e DATABASE_URL="postgres://<user>:<pass>@<external-host>:5432/<db>" \
+  jet-raiders/auth-server:phase2
 echo $?
 ```
 
 Expected outcome:
 
-- Logs include `DATABASE_URL must be set`.
+- Logs include `AUTH_SERVER_BIND_HOST`.
 - Process exits with status code `1`.
 
 ## Testing
