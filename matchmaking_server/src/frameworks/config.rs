@@ -364,12 +364,12 @@ fn resolve_backend_ports_path(env: &impl EnvSource) -> PathBuf {
         }
     }
 
-    PathBuf::from("../config/backend_ports.toml")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../config/backend_ports.toml")
 }
 
 fn default_backend_ports_paths() -> [PathBuf; 2] {
     [
-        PathBuf::from("../config/backend_ports.toml"),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../config/backend_ports.toml"),
         PathBuf::from("/app/config/backend_ports.toml"),
     ]
 }

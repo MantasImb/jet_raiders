@@ -387,12 +387,12 @@ fn resolve_backend_ports_path(env: &impl EnvSource) -> PathBuf {
         }
     }
 
-    PathBuf::from("../config/backend_ports.toml")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../config/backend_ports.toml")
 }
 
 fn default_backend_ports_paths() -> [PathBuf; 2] {
     [
-        PathBuf::from("../config/backend_ports.toml"),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../config/backend_ports.toml"),
         PathBuf::from("/app/config/backend_ports.toml"),
     ]
 }
@@ -792,10 +792,18 @@ head_server = 3300
     }
 
     #[test]
-    fn load_head_server_config_uses_default_ports_path_without_override() {
+    fn load_head_server_config_uses_ports_config_path_when_override_absent() {
+        let path = write_temp_config(
+            "head-default-via-path",
+            r#"
+[ports]
+head_server = 3000
+"#,
+        );
         let env = TestEnv::from_pairs(&[
             ("HEAD_SERVER_BIND_HOST", "127.0.0.1"),
             ("REGION_CONFIG_PATH", "/tmp/regions.custom.toml"),
+            ("BACKEND_PORTS_CONFIG_PATH", path.to_string_lossy().as_ref()),
         ]);
 
         let config = load_head_server_config(&env).expect("config should load");
