@@ -155,13 +155,14 @@ contains invalid game-server URLs.
 ## Runtime and Configuration
 
 - Required bind host env var: `MATCHMAKING_SERVER_BIND_HOST`
-- Required backend ports config env var when `MATCHMAKING_SERVER_PORT` is not
-  set: `BACKEND_PORTS_CONFIG_PATH`
+- Optional backend ports config path override env var:
+  `BACKEND_PORTS_CONFIG_PATH`
 - Bind address: `<MATCHMAKING_SERVER_BIND_HOST>:<resolved_matchmaking_port>`
 - Optional port override env var: `MATCHMAKING_SERVER_PORT` (exact empty
   string `""` is treated as unset)
 - Port precedence: `MATCHMAKING_SERVER_PORT` override, then
-  `config/backend_ports.toml` at `BACKEND_PORTS_CONFIG_PATH`
+  `config/backend_ports.toml` loaded from `BACKEND_PORTS_CONFIG_PATH` when set,
+  otherwise `../config/backend_ports.toml` then `/app/config/backend_ports.toml`
 - Required shared region config env var: `REGION_CONFIG_PATH`
 - Tracing controls: `RUST_LOG`, optional `LOG_FORMAT=json`
 

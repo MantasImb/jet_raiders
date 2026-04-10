@@ -28,7 +28,7 @@ Set local-first values in those files:
 - `auth_server/.env`
   - `AUTH_SERVER_BIND_HOST=127.0.0.1`
   - `DATABASE_URL=postgres://<user>:<pass>@127.0.0.1:5432/<db>`
-  - `BACKEND_PORTS_CONFIG_PATH=../config/backend_ports.toml`
+  - `BACKEND_PORTS_CONFIG_PATH=../config/backend_ports.toml` (optional override)
   - `AUTH_SERVER_PORT=` (optional override; exact empty string uses file port)
 - `game_server/.env`
   - `GAME_SERVER_BIND_HOST=127.0.0.1`
@@ -36,7 +36,7 @@ Set local-first values in those files:
   - `AUTH_SERVICE_URL=http://127.0.0.1:3002`
 - `head_server/.env`
   - `HEAD_SERVER_BIND_HOST=127.0.0.1`
-  - `BACKEND_PORTS_CONFIG_PATH=../config/backend_ports.toml`
+  - `BACKEND_PORTS_CONFIG_PATH=../config/backend_ports.toml` (optional override)
   - `HEAD_SERVER_PORT=` (optional override; exact empty string uses file port)
   - `AUTH_SERVICE_URL=http://127.0.0.1:3002`
   - `MATCHMAKING_SERVICE_URL=http://127.0.0.1:3003`
@@ -44,6 +44,7 @@ Set local-first values in those files:
 - `matchmaking_server/.env`
   - `MATCHMAKING_SERVER_BIND_HOST=127.0.0.1`
   - `BACKEND_PORTS_CONFIG_PATH=../config/backend_ports.toml`
+    (optional override)
   - `MATCHMAKING_SERVER_PORT=` (optional override; exact empty string uses
     file port)
   - `REGION_CONFIG_PATH=../config/regions.toml`

@@ -61,8 +61,9 @@ assumptions.
 11. As a game service operator, I want auth verification dependencies to be
     configurable by environment, so game service token checks work in a
     container network.
-12. As a backend developer, I want service ports defined in one shared config
-    location, so local and container startup use the same source of truth.
+12. As a backend developer, I want auth/head/matchmaking listener ports defined
+    in one shared config location, so local and container startup use the same
+    source of truth for those services.
 13. As a team member, I want clear docs for image build and run commands, so
     onboarding does not require reverse-engineering runtime assumptions.
 14. As a reviewer, I want explicit acceptance checks for container builds and
@@ -82,8 +83,11 @@ assumptions.
   changes except where required for container runtime compatibility.
 - Introduce configurable bind-address behavior where needed so services can
   listen on container-accessible interfaces in container deployments.
-- Define a shared backend service-port catalog in `config` so all backend
-  service ports are declared in one place for local and container runs.
+- Define a shared backend service-port catalog in `config` for auth/head/
+  matchmaking listener ports.
+- Keep game-server listener port runtime-configurable via `GAME_SERVER_PORT`
+  for this scope, while game-server routing endpoints remain declared in
+  `config/regions.toml`.
 - Keep existing default ports aligned with current service contracts through
   that shared config, with environment variables as explicit runtime overrides.
 - Preserve existing service-to-service environment contracts and define
@@ -110,8 +114,9 @@ assumptions.
   Dockerfile builds successfully.
 - Add per-service runtime smoke checks that verify each container starts with
   expected env configuration and exposes the intended port.
-- Add configuration tests that verify service ports are loaded correctly from
-  the shared config catalog and that environment overrides take precedence.
+- Add configuration tests that verify auth/head/matchmaking listener ports are
+  loaded correctly from the shared config catalog and that environment
+  overrides take precedence.
 - Add negative-path checks for critical misconfiguration, especially missing
   auth database configuration and invalid region catalog configuration.
 - Add a backend stack integration smoke scenario that validates basic
@@ -128,6 +133,8 @@ assumptions.
 
 - Dockerfiles for game clients
 - Dockerfiles for web clients
+- Game-server listener-port centralization into the shared backend ports
+  catalog (deferred; game routing endpoints remain in `config/regions.toml`)
 - Kubernetes manifests and production cluster deployment
 - Full CI/CD image publishing pipelines
 - Registry governance and release promotion policies

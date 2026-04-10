@@ -102,13 +102,14 @@ in `config/regions.toml`.
       `InvalidConfiguration` (exit code `2`).
 - [ ] Exact empty-string override values (`""`) are treated as unset
       placeholders and fall back to file loading.
-- [ ] When override is not used, `BACKEND_PORTS_CONFIG_PATH` is required.
-- [ ] Missing or empty `BACKEND_PORTS_CONFIG_PATH` when required fails fast as
-      `MissingRequiredConfig` (exit code `1`).
+- [ ] `BACKEND_PORTS_CONFIG_PATH` acts as an optional path override.
+- [ ] When `BACKEND_PORTS_CONFIG_PATH` is not set, services try canonical
+      defaults (`../config/backend_ports.toml` locally, then
+      `/app/config/backend_ports.toml` in containers).
 - [ ] Missing service key in the loaded file fails fast as
       `InvalidConfiguration` (exit code `2`).
-- [ ] Services may skip `BACKEND_PORTS_CONFIG_PATH` file loading when a valid
-      `*_PORT` override is present.
+- [ ] Services skip backend-ports file loading when a valid `*_PORT` override
+      is present.
 - [ ] `game_server` runtime port behavior remains unchanged in code during this
       phase.
 - [ ] Documentation explicitly states that `GAME_SERVER_PORT` must align with

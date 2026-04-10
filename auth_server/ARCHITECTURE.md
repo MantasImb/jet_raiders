@@ -130,8 +130,7 @@ auth_server/
 ## Startup Failure Codes (Current)
 
 - `1`: required startup config is missing (`DATABASE_URL` or
-  `AUTH_SERVER_BIND_HOST` or `BACKEND_PORTS_CONFIG_PATH` when override is not
-  set).
+  `AUTH_SERVER_BIND_HOST`).
 - `2`: startup config is invalid.
 - `3`: database connection failed.
 - `4`: startup migrations failed.

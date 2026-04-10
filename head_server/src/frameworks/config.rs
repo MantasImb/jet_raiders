@@ -20,6 +20,7 @@ pub enum HeadServerConfigError {
     ReadPortsConfig(PathBuf),
     ParsePortsConfig(PathBuf),
     MissingPortsConfigKey(&'static str),
+    InvalidPortsConfigValue { key: &'static str, value: u16 },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -333,6 +334,12 @@ fn resolve_head_server_port(env: &impl EnvSource) -> Result<u16, HeadServerConfi
                     key: "HEAD_SERVER_PORT",
                     value: value.clone(),
                 })?;
+        if override_port == 0 {
+            return Err(HeadServerConfigError::InvalidEnvVar {
+                key: "HEAD_SERVER_PORT",
+                value,
+            });
+        }
         tracing::warn!(
             service = "head_server",
             env_var = "HEAD_SERVER_PORT",
@@ -346,18 +353,48 @@ fn resolve_head_server_port(env: &impl EnvSource) -> Result<u16, HeadServerConfi
 }
 
 fn resolve_port_from_catalog(env: &impl EnvSource) -> Result<u16, HeadServerConfigError> {
-    let backend_ports_path = required_env_var(env, "BACKEND_PORTS_CONFIG_PATH")?;
-    let backend_ports_path = PathBuf::from(backend_ports_path);
+    let backend_ports_path = resolve_backend_ports_path(env);
     let raw = std::fs::read_to_string(&backend_ports_path)
         .map_err(|_| HeadServerConfigError::ReadPortsConfig(backend_ports_path.clone()))?;
     let parsed: BackendPortsConfig = toml::from_str(&raw)
         .map_err(|_| HeadServerConfigError::ParsePortsConfig(backend_ports_path.clone()))?;
-    parsed
+    let port = parsed
         .ports
         .head_server
         .ok_or(HeadServerConfigError::MissingPortsConfigKey(
             "ports.head_server",
-        ))
+        ))?;
+    if port == 0 {
+        return Err(HeadServerConfigError::InvalidPortsConfigValue {
+            key: "ports.head_server",
+            value: port,
+        });
+    }
+    Ok(port)
+}
+
+fn resolve_backend_ports_path(env: &impl EnvSource) -> PathBuf {
+    if let Some(path) = env
+        .get_var("BACKEND_PORTS_CONFIG_PATH")
+        .filter(|value| !value.trim().is_empty())
+    {
+        return PathBuf::from(path);
+    }
+
+    for candidate in default_backend_ports_paths() {
+        if candidate.exists() {
+            return candidate;
+        }
+    }
+
+    PathBuf::from("../config/backend_ports.toml")
+}
+
+fn default_backend_ports_paths() -> [PathBuf; 2] {
+    [
+        PathBuf::from("../config/backend_ports.toml"),
+        PathBuf::from("/app/config/backend_ports.toml"),
+    ]
 }
 
 #[cfg(test)]
@@ -736,9 +773,10 @@ head_server = 3300
     }
 
     #[test]
-    fn load_head_server_config_requires_ports_path_without_override() {
+    fn load_head_server_config_rejects_zero_port_override() {
         let env = TestEnv::from_pairs(&[
             ("HEAD_SERVER_BIND_HOST", "127.0.0.1"),
+            ("HEAD_SERVER_PORT", "0"),
             ("REGION_CONFIG_PATH", "/tmp/regions.custom.toml"),
         ]);
 
@@ -746,10 +784,23 @@ head_server = 3300
 
         assert!(matches!(
             config,
-            Err(HeadServerConfigError::MissingEnvVar(
-                "BACKEND_PORTS_CONFIG_PATH"
-            ))
+            Err(HeadServerConfigError::InvalidEnvVar {
+                key: "HEAD_SERVER_PORT",
+                value,
+            }) if value == "0"
         ));
+    }
+
+    #[test]
+    fn load_head_server_config_uses_default_ports_path_without_override() {
+        let env = TestEnv::from_pairs(&[
+            ("HEAD_SERVER_BIND_HOST", "127.0.0.1"),
+            ("REGION_CONFIG_PATH", "/tmp/regions.custom.toml"),
+        ]);
+
+        let config = load_head_server_config(&env).expect("config should load");
+
+        assert_eq!(config.port, 3000);
     }
 
     #[test]
@@ -774,6 +825,32 @@ auth_server = 3002
             Err(HeadServerConfigError::MissingPortsConfigKey(
                 "ports.head_server"
             ))
+        ));
+    }
+
+    #[test]
+    fn load_head_server_config_rejects_zero_head_port_key() {
+        let path = write_temp_config(
+            "zero-head-key",
+            r#"
+[ports]
+head_server = 0
+"#,
+        );
+        let env = TestEnv::from_pairs(&[
+            ("HEAD_SERVER_BIND_HOST", "127.0.0.1"),
+            ("REGION_CONFIG_PATH", "/tmp/regions.custom.toml"),
+            ("BACKEND_PORTS_CONFIG_PATH", path.to_string_lossy().as_ref()),
+        ]);
+
+        let config = load_head_server_config(&env);
+
+        assert!(matches!(
+            config,
+            Err(HeadServerConfigError::InvalidPortsConfigValue {
+                key: "ports.head_server",
+                value: 0,
+            })
         ));
     }
 }

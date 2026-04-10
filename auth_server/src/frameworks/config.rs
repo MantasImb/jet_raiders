@@ -15,6 +15,7 @@ pub enum AuthServerConfigError {
     ReadPortsConfig(PathBuf),
     ParsePortsConfig(PathBuf),
     MissingPortsConfigKey(&'static str),
+    InvalidPortsConfigValue { key: &'static str, value: u16 },
 }
 
 pub trait EnvSource {
@@ -62,6 +63,12 @@ fn resolve_auth_server_port(env: &impl EnvSource) -> Result<u16, AuthServerConfi
                     key: "AUTH_SERVER_PORT",
                     value: value.clone(),
                 })?;
+        if override_port == 0 {
+            return Err(AuthServerConfigError::InvalidEnvVar {
+                key: "AUTH_SERVER_PORT",
+                value,
+            });
+        }
         tracing::warn!(
             service = "auth_server",
             env_var = "AUTH_SERVER_PORT",
@@ -75,19 +82,49 @@ fn resolve_auth_server_port(env: &impl EnvSource) -> Result<u16, AuthServerConfi
 }
 
 fn resolve_port_from_catalog(env: &impl EnvSource) -> Result<u16, AuthServerConfigError> {
-    let backend_ports_path = required_env_var(env, "BACKEND_PORTS_CONFIG_PATH")?;
-    let backend_ports_path = PathBuf::from(backend_ports_path);
+    let backend_ports_path = resolve_backend_ports_path(env);
     let raw = std::fs::read_to_string(&backend_ports_path)
         .map_err(|_| AuthServerConfigError::ReadPortsConfig(backend_ports_path.clone()))?;
 
     let parsed: BackendPortsConfig = toml::from_str(&raw)
         .map_err(|_| AuthServerConfigError::ParsePortsConfig(backend_ports_path.clone()))?;
-    parsed
+    let port = parsed
         .ports
         .auth_server
         .ok_or(AuthServerConfigError::MissingPortsConfigKey(
             "ports.auth_server",
-        ))
+        ))?;
+    if port == 0 {
+        return Err(AuthServerConfigError::InvalidPortsConfigValue {
+            key: "ports.auth_server",
+            value: port,
+        });
+    }
+    Ok(port)
+}
+
+fn resolve_backend_ports_path(env: &impl EnvSource) -> PathBuf {
+    if let Some(path) = env
+        .get_var("BACKEND_PORTS_CONFIG_PATH")
+        .filter(|value| !value.trim().is_empty())
+    {
+        return PathBuf::from(path);
+    }
+
+    for candidate in default_backend_ports_paths() {
+        if candidate.exists() {
+            return candidate;
+        }
+    }
+
+    PathBuf::from("../config/backend_ports.toml")
+}
+
+fn default_backend_ports_paths() -> [PathBuf; 2] {
+    [
+        PathBuf::from("../config/backend_ports.toml"),
+        PathBuf::from("/app/config/backend_ports.toml"),
+    ]
 }
 
 fn required_env_var(
@@ -257,18 +294,31 @@ auth_server = 4202
     }
 
     #[test]
-    fn load_auth_server_config_requires_ports_path_when_override_absent() {
+    fn load_auth_server_config_rejects_zero_override_port() {
         let config = load_auth_server_config(&TestEnv::from_pairs(&[
             ("DATABASE_URL", "postgres://db"),
             ("AUTH_SERVER_BIND_HOST", "0.0.0.0"),
+            ("AUTH_SERVER_PORT", "0"),
         ]));
 
         assert!(matches!(
             config,
-            Err(AuthServerConfigError::MissingEnvVar(
-                "BACKEND_PORTS_CONFIG_PATH"
-            ))
+            Err(AuthServerConfigError::InvalidEnvVar {
+                key: "AUTH_SERVER_PORT",
+                value,
+            }) if value == "0"
         ));
+    }
+
+    #[test]
+    fn load_auth_server_config_uses_default_ports_path_when_override_absent() {
+        let config = load_auth_server_config(&TestEnv::from_pairs(&[
+            ("DATABASE_URL", "postgres://db"),
+            ("AUTH_SERVER_BIND_HOST", "0.0.0.0"),
+        ]))
+        .expect("config should load from default backend ports path");
+
+        assert_eq!(config.port, 3002);
     }
 
     #[test]
@@ -295,6 +345,34 @@ head_server = 3000
             Err(AuthServerConfigError::MissingPortsConfigKey(
                 "ports.auth_server"
             ))
+        ));
+    }
+
+    #[test]
+    fn load_auth_server_config_rejects_zero_auth_port_key() {
+        let config_file = TempConfigFile::new(
+            "zero-auth-key",
+            r#"
+[ports]
+auth_server = 0
+"#,
+        );
+
+        let config = load_auth_server_config(&TestEnv::from_pairs(&[
+            ("DATABASE_URL", "postgres://db"),
+            ("AUTH_SERVER_BIND_HOST", "0.0.0.0"),
+            (
+                "BACKEND_PORTS_CONFIG_PATH",
+                config_file.path().to_string_lossy().as_ref(),
+            ),
+        ]));
+
+        assert!(matches!(
+            config,
+            Err(AuthServerConfigError::InvalidPortsConfigValue {
+                key: "ports.auth_server",
+                value: 0,
+            })
         ));
     }
 }

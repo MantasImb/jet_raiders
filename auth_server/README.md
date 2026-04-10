@@ -178,8 +178,8 @@ Required environment variable:
 - `DATABASE_URL`: Postgres connection string.
 - `AUTH_SERVER_BIND_HOST`: listener host (for example `127.0.0.1` locally,
   `0.0.0.0` in containers).
-- `BACKEND_PORTS_CONFIG_PATH`: path to shared backend port catalog when
-  `AUTH_SERVER_PORT` is not set.
+- `BACKEND_PORTS_CONFIG_PATH`: optional path override for shared backend port
+  catalog.
 
 Optional environment variables:
 
@@ -192,13 +192,13 @@ Server bind:
 
 - `<AUTH_SERVER_BIND_HOST>:<resolved_auth_port>`
 - Port precedence: `AUTH_SERVER_PORT` override, then
-  `config/backend_ports.toml` at `BACKEND_PORTS_CONFIG_PATH`.
+  `config/backend_ports.toml` loaded from `BACKEND_PORTS_CONFIG_PATH` when set,
+  otherwise `../config/backend_ports.toml` then `/app/config/backend_ports.toml`.
 
 Fatal startup exit codes:
 
 - `1`: required startup config is missing (`DATABASE_URL` or
-  `AUTH_SERVER_BIND_HOST` or `BACKEND_PORTS_CONFIG_PATH` when override is not
-  set).
+  `AUTH_SERVER_BIND_HOST`).
 - `2`: startup config is invalid.
 - `3`: database connection failed.
 - `4`: startup migrations failed.

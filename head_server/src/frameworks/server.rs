@@ -98,6 +98,14 @@ pub async fn run() -> Result<(), StartupFailure> {
             );
             StartupFailure::InvalidConfiguration
         }
+        HeadServerConfigError::InvalidPortsConfigValue { key, value } => {
+            tracing::error!(
+                config_key = key,
+                value,
+                "backend ports config has invalid port value"
+            );
+            StartupFailure::InvalidConfiguration
+        }
     })?;
     let startup_http = Client::new();
     check_upstream_health(&startup_http, &config.auth_service_url, "auth").await?;

@@ -97,6 +97,14 @@ pub async fn run() -> Result<(), StartupFailure> {
             );
             StartupFailure::InvalidConfiguration
         }
+        MatchmakingServerConfigError::InvalidPortsConfigValue { key, value } => {
+            tracing::error!(
+                config_key = key,
+                value,
+                "backend ports config has invalid port value"
+            );
+            StartupFailure::InvalidConfiguration
+        }
     })?;
 
     tracing::debug!(

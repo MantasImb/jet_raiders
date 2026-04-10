@@ -214,13 +214,14 @@ Success response:
 ## Runtime and Configuration
 
 - Required bind host env var: `HEAD_SERVER_BIND_HOST`
-- Required backend ports config env var when `HEAD_SERVER_PORT` is not set:
+- Optional backend ports config path override env var:
   `BACKEND_PORTS_CONFIG_PATH`
 - Bind address: `<HEAD_SERVER_BIND_HOST>:<resolved_head_port>`
 - Optional port override env var: `HEAD_SERVER_PORT` (exact empty string `""`
   is treated as unset)
 - Port precedence: `HEAD_SERVER_PORT` override, then
-  `config/backend_ports.toml` at `BACKEND_PORTS_CONFIG_PATH`
+  `config/backend_ports.toml` loaded from `BACKEND_PORTS_CONFIG_PATH` when set,
+  otherwise `../config/backend_ports.toml` then `/app/config/backend_ports.toml`
 - Auth base URL env var: `AUTH_SERVICE_URL`
 - Default auth base URL: `http://localhost:3002`
 - Matchmaking base URL env var: `MATCHMAKING_SERVICE_URL`
