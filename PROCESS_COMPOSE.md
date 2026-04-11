@@ -21,6 +21,9 @@ smoke run and tear them down automatically:
 scripts/ci_smoke.sh
 ```
 
+Canonical contract details are documented in
+`BACKEND_VERIFICATION.md`.
+
 Notes:
 
 - If `DATABASE_URL` is already set, the script uses it.
