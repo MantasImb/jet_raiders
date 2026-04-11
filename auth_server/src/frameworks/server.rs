@@ -1,3 +1,4 @@
+use crate::frameworks::config::{load_auth_server_config, AuthServerConfigError, ProcessEnv};
 use crate::frameworks::db;
 use crate::interface_adapters::routes::app;
 use crate::interface_adapters::state::AppState;
@@ -11,6 +12,7 @@ use tokio::sync::Mutex;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StartupFailure {
     MissingRequiredConfig,
+    InvalidConfiguration,
     DatabaseConnection,
     Migration,
     Bind,
@@ -21,10 +23,11 @@ impl StartupFailure {
     pub const fn exit_code(self) -> i32 {
         match self {
             StartupFailure::MissingRequiredConfig => 1,
-            StartupFailure::DatabaseConnection => 2,
-            StartupFailure::Migration => 3,
-            StartupFailure::Bind => 4,
-            StartupFailure::Serve => 5,
+            StartupFailure::InvalidConfiguration => 2,
+            StartupFailure::DatabaseConnection => 3,
+            StartupFailure::Migration => 4,
+            StartupFailure::Bind => 5,
+            StartupFailure::Serve => 6,
         }
     }
 }
@@ -59,9 +62,50 @@ pub async fn run() -> Result<(), StartupFailure> {
     // Load .env locally; safe to ignore when not present.
     let _ = dotenvy::dotenv();
     init_tracing();
-    let database_url = load_required_env_var("DATABASE_URL")?;
-    let bind_host = load_required_env_var("AUTH_SERVER_BIND_HOST")?;
-    let db = initialize_database(&database_url).await?;
+    let config = load_auth_server_config(&ProcessEnv).map_err(|error| match error {
+        AuthServerConfigError::MissingEnvVar(key) => {
+            tracing::error!(env_var = key, "required environment variable is missing");
+            StartupFailure::MissingRequiredConfig
+        }
+        AuthServerConfigError::InvalidEnvVar { key, value } => {
+            tracing::error!(
+                env_var = key,
+                value = %value,
+                "environment variable has invalid numeric value"
+            );
+            StartupFailure::InvalidConfiguration
+        }
+        AuthServerConfigError::ReadPortsConfig(path) => {
+            tracing::error!(
+                backend_ports_config_path = %path.display(),
+                "failed to read backend ports config"
+            );
+            StartupFailure::InvalidConfiguration
+        }
+        AuthServerConfigError::ParsePortsConfig(path) => {
+            tracing::error!(
+                backend_ports_config_path = %path.display(),
+                "failed to parse backend ports config"
+            );
+            StartupFailure::InvalidConfiguration
+        }
+        AuthServerConfigError::MissingPortsConfigKey(key) => {
+            tracing::error!(
+                config_key = key,
+                "backend ports config is missing required key"
+            );
+            StartupFailure::InvalidConfiguration
+        }
+        AuthServerConfigError::InvalidPortsConfigValue { key, value } => {
+            tracing::error!(
+                config_key = key,
+                value,
+                "backend ports config has invalid port value"
+            );
+            StartupFailure::InvalidConfiguration
+        }
+    })?;
+    let db = initialize_database(&config.database_url).await?;
 
     // Shared, in-memory store for guest sessions.
     let state = AppState {
@@ -72,11 +116,16 @@ pub async fn run() -> Result<(), StartupFailure> {
     // Wire routes for the guest-only auth flow.
     let app = app(state);
 
-    let addr = format!("{bind_host}:3002")
+    let addr = format!("{}:{}", config.bind_host, config.port)
         .parse::<SocketAddr>()
         .map_err(|error| {
-            tracing::error!(bind_host = %bind_host, error = %error, "invalid AUTH_SERVER_BIND_HOST");
-            StartupFailure::Bind
+            tracing::error!(
+                bind_host = %config.bind_host,
+                port = config.port,
+                error = %error,
+                "invalid bind host or port"
+            );
+            StartupFailure::InvalidConfiguration
         })?;
     let listener = bind_listener(addr).await?;
     tracing::info!(%addr, "listening");
@@ -85,19 +134,6 @@ pub async fn run() -> Result<(), StartupFailure> {
         tracing::error!(error = %error, "server error");
         StartupFailure::Serve
     })
-}
-
-fn load_required_env_var(key: &'static str) -> Result<String, StartupFailure> {
-    match std::env::var(key) {
-        Ok(value) if !value.trim().is_empty() => Ok(value),
-        _ => {
-            tracing::error!(
-                env_var = key,
-                "required environment variable must be set and non-empty"
-            );
-            Err(StartupFailure::MissingRequiredConfig)
-        }
-    }
 }
 
 async fn initialize_database(database_url: &str) -> Result<PgPool, StartupFailure> {
@@ -128,9 +164,10 @@ mod tests {
     #[test]
     fn when_startup_failure_is_mapped_then_expected_exit_code_is_used() {
         assert_eq!(StartupFailure::MissingRequiredConfig.exit_code(), 1);
-        assert_eq!(StartupFailure::DatabaseConnection.exit_code(), 2);
-        assert_eq!(StartupFailure::Migration.exit_code(), 3);
-        assert_eq!(StartupFailure::Bind.exit_code(), 4);
-        assert_eq!(StartupFailure::Serve.exit_code(), 5);
+        assert_eq!(StartupFailure::InvalidConfiguration.exit_code(), 2);
+        assert_eq!(StartupFailure::DatabaseConnection.exit_code(), 3);
+        assert_eq!(StartupFailure::Migration.exit_code(), 4);
+        assert_eq!(StartupFailure::Bind.exit_code(), 5);
+        assert_eq!(StartupFailure::Serve.exit_code(), 6);
     }
 }

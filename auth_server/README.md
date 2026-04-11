@@ -178,24 +178,32 @@ Required environment variable:
 - `DATABASE_URL`: Postgres connection string.
 - `AUTH_SERVER_BIND_HOST`: listener host (for example `127.0.0.1` locally,
   `0.0.0.0` in containers).
+- `BACKEND_PORTS_CONFIG_PATH`: optional path override for shared backend port
+  catalog.
 
 Optional environment variables:
 
+- `AUTH_SERVER_PORT`: explicit listener-port override. Exact empty string (`""`)
+  is treated as unset.
 - `RUST_LOG`: tracing filter (defaults to `info`).
 - `LOG_FORMAT=json`: enables JSON logs.
 
 Server bind:
 
-- `<AUTH_SERVER_BIND_HOST>:3002`
+- `<AUTH_SERVER_BIND_HOST>:<resolved_auth_port>`
+- Port precedence: `AUTH_SERVER_PORT` override, then
+  `config/backend_ports.toml` loaded from `BACKEND_PORTS_CONFIG_PATH` when set,
+  otherwise `../config/backend_ports.toml` then `/app/config/backend_ports.toml`.
 
 Fatal startup exit codes:
 
 - `1`: required startup config is missing (`DATABASE_URL` or
   `AUTH_SERVER_BIND_HOST`).
-- `2`: database connection failed.
-- `3`: startup migrations failed.
-- `4`: service failed to bind its listener socket.
-- `5`: server runtime failed while serving requests.
+- `2`: startup config is invalid.
+- `3`: database connection failed.
+- `4`: startup migrations failed.
+- `5`: service failed to bind its listener socket.
+- `6`: server runtime failed while serving requests.
 
 Session details:
 
@@ -233,6 +241,7 @@ docker run --rm \
   --name auth-server \
   -p 3002:3002 \
   -e AUTH_SERVER_BIND_HOST=0.0.0.0 \
+  -e BACKEND_PORTS_CONFIG_PATH=/app/config/backend_ports.toml \
   -e DATABASE_URL="postgres://<user>:<pass>@<external-host>:5432/<db>" \
   jet-raiders/auth-server:phase2
 ```

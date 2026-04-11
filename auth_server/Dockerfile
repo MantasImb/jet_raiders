@@ -25,6 +25,7 @@ RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin appuser
 WORKDIR /app
 
 COPY --from=builder /app/auth_server/target/release/auth_server /usr/local/bin/auth_server
+COPY config/backend_ports.toml /app/config/backend_ports.toml
 
 EXPOSE 3002
 

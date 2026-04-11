@@ -69,6 +69,43 @@ pub async fn run() -> Result<(), StartupFailure> {
             tracing::error!(env_var = key, "required environment variable is missing");
             StartupFailure::MissingRequiredConfig
         }
+        HeadServerConfigError::InvalidEnvVar { key, value } => {
+            tracing::error!(
+                env_var = key,
+                value = %value,
+                "environment variable has invalid numeric value"
+            );
+            StartupFailure::InvalidConfiguration
+        }
+        HeadServerConfigError::ReadPortsConfig(path) => {
+            tracing::error!(
+                backend_ports_config_path = %path.display(),
+                "failed to read backend ports config"
+            );
+            StartupFailure::InvalidConfiguration
+        }
+        HeadServerConfigError::ParsePortsConfig(path) => {
+            tracing::error!(
+                backend_ports_config_path = %path.display(),
+                "failed to parse backend ports config"
+            );
+            StartupFailure::InvalidConfiguration
+        }
+        HeadServerConfigError::MissingPortsConfigKey(key) => {
+            tracing::error!(
+                config_key = key,
+                "backend ports config is missing required key"
+            );
+            StartupFailure::InvalidConfiguration
+        }
+        HeadServerConfigError::InvalidPortsConfigValue { key, value } => {
+            tracing::error!(
+                config_key = key,
+                value,
+                "backend ports config has invalid port value"
+            );
+            StartupFailure::InvalidConfiguration
+        }
     })?;
     let startup_http = Client::new();
     check_upstream_health(&startup_http, &config.auth_service_url, "auth").await?;
@@ -155,10 +192,15 @@ pub async fn run() -> Result<(), StartupFailure> {
     // Start the web server with the HTTP routes wired up.
     let app = routes::app(state);
 
-    let addr = format!("{}:3000", config.bind_host)
+    let addr = format!("{}:{}", config.bind_host, config.port)
         .parse::<SocketAddr>()
         .map_err(|error| {
-            tracing::error!(bind_host = %config.bind_host, error = %error, "invalid bind host");
+            tracing::error!(
+                bind_host = %config.bind_host,
+                port = config.port,
+                error = %error,
+                "invalid bind host or port"
+            );
             StartupFailure::InvalidConfiguration
         })?;
     tracing::info!(%addr, "listening");

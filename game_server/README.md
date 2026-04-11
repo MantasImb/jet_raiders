@@ -21,6 +21,8 @@ session participation over WebSocket.
 - Bind address: `<GAME_SERVER_BIND_HOST>:<GAME_SERVER_PORT>`
 - Optional port env var: `GAME_SERVER_PORT` (default `3001`)
 - Optional auth timeout env var: `AUTH_VERIFY_TIMEOUT_MS` (default `1500`)
+- Keep `GAME_SERVER_PORT` aligned with the game-server URL ports declared in
+  `config/regions.toml` for local single-node setups.
 - Tracing controls: `RUST_LOG`, optional `LOG_FORMAT=json`
 
 Fatal startup exit codes:

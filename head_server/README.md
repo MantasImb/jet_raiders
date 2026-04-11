@@ -214,7 +214,14 @@ Success response:
 ## Runtime and Configuration
 
 - Required bind host env var: `HEAD_SERVER_BIND_HOST`
-- Bind address: `<HEAD_SERVER_BIND_HOST>:3000`
+- Optional backend ports config path override env var:
+  `BACKEND_PORTS_CONFIG_PATH`
+- Bind address: `<HEAD_SERVER_BIND_HOST>:<resolved_head_port>`
+- Optional port override env var: `HEAD_SERVER_PORT` (exact empty string `""`
+  is treated as unset)
+- Port precedence: `HEAD_SERVER_PORT` override, then
+  `config/backend_ports.toml` loaded from `BACKEND_PORTS_CONFIG_PATH` when set,
+  otherwise `../config/backend_ports.toml` then `/app/config/backend_ports.toml`
 - Auth base URL env var: `AUTH_SERVICE_URL`
 - Default auth base URL: `http://localhost:3002`
 - Matchmaking base URL env var: `MATCHMAKING_SERVICE_URL`
@@ -255,6 +262,7 @@ docker run --rm \
   --name head-server \
   -p 3000:3000 \
   -e HEAD_SERVER_BIND_HOST=0.0.0.0 \
+  -e BACKEND_PORTS_CONFIG_PATH=/app/config/backend_ports.toml \
   -e AUTH_SERVICE_URL="http://auth-server:3002" \
   -e MATCHMAKING_SERVICE_URL="http://matchmaking-server:3003" \
   -e REGION_CONFIG_PATH=/app/config/regions.toml \
