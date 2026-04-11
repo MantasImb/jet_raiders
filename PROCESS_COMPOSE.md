@@ -26,7 +26,8 @@ Notes:
 - If `DATABASE_URL` is already set, the script uses it.
 - If `DATABASE_URL` is not set, the script starts an ephemeral Postgres
   container on `127.0.0.1:55432` and removes it on exit.
-- Script logs are written to `.tmp/ci-smoke-logs/` when a failure occurs.
+- Service logs are always written to `.tmp/ci-smoke-logs/`. On failure, the
+  script prints the log location for debugging.
 
 ## Local Bootstrap
 

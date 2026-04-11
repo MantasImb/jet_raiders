@@ -130,6 +130,11 @@ start_services() {
     cargo run
   ) >"${LOG_DIR}/game_server.log" 2>&1 &
   GAME_PID=$!
+}
+
+start_head_service() {
+  wait_for_http_ok "http://127.0.0.1:3002/health" "auth_server"
+  wait_for_http_ok "http://127.0.0.1:3003/health" "matchmaking_server"
 
   (
     cd "${ROOT_DIR}/head_server"
@@ -204,6 +209,7 @@ run_smoke_flow() {
 main() {
   start_ephemeral_postgres_if_needed
   start_services
+  start_head_service
   run_smoke_flow
   echo "ci_smoke passed"
 }
