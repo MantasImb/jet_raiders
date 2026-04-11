@@ -118,58 +118,27 @@ in `config/regions.toml`.
 - [ ] Config parsing and precedence behavior is covered by focused tests for
       auth/head/matchmaking.
 
-### Phase 3 execution plan (detailed)
-
-1. Add shared catalog artifact
-   - Create `config/backend_ports.toml` with `[ports]` entries for auth, head,
-     and matchmaking defaults.
-   - Keep catalog intentionally minimal and listener-port focused.
-2. Implement auth service port-source precedence
-   - Add config parsing in auth frameworks config/runtime wiring.
-   - Resolve listener port from `AUTH_SERVER_PORT` override first, then file.
-   - Enforce startup-failure semantics for missing/invalid config.
-   - Emit structured warning when override is used.
-3. Implement head service port-source precedence
-   - Add equivalent parsing and precedence behavior in head runtime config.
-   - Preserve existing upstream URL and region-catalog behavior.
-   - Emit structured warning when override is used.
-4. Implement matchmaking service port-source precedence
-   - Add equivalent parsing and precedence behavior in matchmaking runtime
-     config.
-   - Preserve existing strict region-catalog loading and validation.
-   - Emit structured warning when override is used.
-5. Keep game server behavior unchanged
-   - Do not refactor `game_server` listener-port source in this phase.
-   - Preserve current `GAME_SERVER_PORT` runtime behavior.
-6. Update runtime and container docs
-   - Document default container path `/app/config/backend_ports.toml`.
-   - Document `BACKEND_PORTS_CONFIG_PATH` and the `*_PORT` override contract.
-   - Document game-server/region-port alignment requirement.
-7. Add focused tests and smoke checks
-   - Per service: file default load, env override precedence, empty-string
-     placeholder handling, invalid override failure, missing path failure, and
-     missing-key failure.
-   - Run service-level checks and keep outcomes easy to reproduce.
-
 ---
 
-## Phase 4: Backend Container Orchestration and Connectivity Smoke
+## Phase 4: Backend Startup Script and Connectivity Smoke
 
 **User stories**: 5, 13, 14
 
 ### What to build
 
-Add backend-only container orchestration for local validation and run an
-end-to-end smoke flow that verifies cross-service connectivity and core startup
-contracts.
+Add a simple backend startup-and-smoke script for CI and local verification.
+The script should start backend services for the duration of the run, execute
+an end-to-end smoke flow that verifies cross-service connectivity and core
+startup contracts, and then clean up all started processes.
 
 ### Acceptance criteria
 
-- [ ] Backend-only container stack can be launched with one documented command.
-- [ ] Services can resolve each other through container networking.
+- [ ] A single script command can start backend dependencies and all backend
+      services for smoke execution.
+- [ ] The script waits for service readiness before running smoke requests.
 - [ ] Cross-service smoke flow passes for auth, head, matchmaking, and game
       integration touchpoints.
-- [ ] Critical misconfiguration scenarios fail predictably and are documented.
+- [ ] The script always tears down started services and temporary dependencies.
 
 ---
 

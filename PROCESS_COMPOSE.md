@@ -12,6 +12,22 @@ change.
 process-compose up
 ```
 
+## CI Smoke Script
+
+Use the simple backend smoke script when you want to start services just for a
+smoke run and tear them down automatically:
+
+```bash
+scripts/ci_smoke.sh
+```
+
+Notes:
+
+- If `DATABASE_URL` is already set, the script uses it.
+- If `DATABASE_URL` is not set, the script starts an ephemeral Postgres
+  container on `127.0.0.1:55432` and removes it on exit.
+- Script logs are written to `.tmp/ci-smoke-logs/` when a failure occurs.
+
 ## Local Bootstrap
 
 Before running `process-compose up`, create per-service `.env` files:
