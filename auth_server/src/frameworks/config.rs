@@ -183,8 +183,8 @@ mod tests {
             Self { path }
         }
 
-        fn path(&self) -> &PathBuf {
-            &self.path
+        fn path(&self) -> &std::path::Path {
+            self.path.as_path()
         }
     }
 
