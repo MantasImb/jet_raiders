@@ -45,13 +45,20 @@ trap cleanup EXIT INT TERM
 wait_for_http_ok() {
   local url="$1"
   local name="$2"
-  local max_attempts="${3:-60}"
+  local max_attempts="${3:-${HEALTH_MAX_ATTEMPTS:-300}}"
+  local pid_to_watch="${4:-}"
 
   local attempt
   for attempt in $(seq 1 "${max_attempts}"); do
     if curl --fail --silent "${url}" >/dev/null 2>&1; then
       return 0
     fi
+
+    if [[ -n "${pid_to_watch}" ]] && ! kill -0 "${pid_to_watch}" 2>/dev/null; then
+      echo "${name} exited before becoming healthy at ${url}" >&2
+      return 1
+    fi
+
     sleep 1
   done
 
@@ -133,8 +140,10 @@ start_services() {
 }
 
 start_head_service() {
-  wait_for_http_ok "http://127.0.0.1:3002/health" "auth_server"
-  wait_for_http_ok "http://127.0.0.1:3003/health" "matchmaking_server"
+  wait_for_http_ok "http://127.0.0.1:3002/health" "auth_server" \
+    "${HEALTH_MAX_ATTEMPTS:-300}" "${AUTH_PID}"
+  wait_for_http_ok "http://127.0.0.1:3003/health" "matchmaking_server" \
+    "${HEALTH_MAX_ATTEMPTS:-300}" "${MATCHMAKING_PID}"
 
   (
     cd "${ROOT_DIR}/head_server"
@@ -149,10 +158,14 @@ start_head_service() {
 }
 
 run_smoke_flow() {
-  wait_for_http_ok "http://127.0.0.1:3002/health" "auth_server"
-  wait_for_http_ok "http://127.0.0.1:3003/health" "matchmaking_server"
-  wait_for_http_ok "http://127.0.0.1:3001/health" "game_server"
-  wait_for_http_ok "http://127.0.0.1:3000/health" "head_server"
+  wait_for_http_ok "http://127.0.0.1:3002/health" "auth_server" \
+    "${HEALTH_MAX_ATTEMPTS:-300}" "${AUTH_PID}"
+  wait_for_http_ok "http://127.0.0.1:3003/health" "matchmaking_server" \
+    "${HEALTH_MAX_ATTEMPTS:-300}" "${MATCHMAKING_PID}"
+  wait_for_http_ok "http://127.0.0.1:3001/health" "game_server" \
+    "${HEALTH_MAX_ATTEMPTS:-300}" "${GAME_PID}"
+  wait_for_http_ok "http://127.0.0.1:3000/health" "head_server" \
+    "${HEALTH_MAX_ATTEMPTS:-300}" "${HEAD_PID}"
 
   local guest_one
   guest_one="$(curl --fail --silent \

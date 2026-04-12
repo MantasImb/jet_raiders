@@ -23,4 +23,14 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run backend startup and smoke contract
+        env:
+          HEALTH_MAX_ATTEMPTS: "600"
         run: bash scripts/ci_smoke.sh
+
+      - name: Upload smoke logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-smoke-logs
+          path: .tmp/ci-smoke-logs/
+          if-no-files-found: ignore
