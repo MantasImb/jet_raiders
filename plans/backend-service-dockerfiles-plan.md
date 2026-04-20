@@ -133,12 +133,12 @@ startup contracts, and then clean up all started processes.
 
 ### Acceptance criteria
 
-- [ ] A single script command can start backend dependencies and all backend
+- [x] A single script command can start backend dependencies and all backend
       services for smoke execution.
-- [ ] The script waits for service readiness before running smoke requests.
-- [ ] Cross-service smoke flow passes for auth, head, matchmaking, and game
+- [x] The script waits for service readiness before running smoke requests.
+- [x] Cross-service smoke flow passes for auth, head, matchmaking, and game
       integration touchpoints.
-- [ ] The script always tears down started services and temporary dependencies.
+- [x] The script always tears down started services and temporary dependencies.
 
 ---
 
@@ -153,10 +153,10 @@ contract that can be run locally and in CI for build/start/smoke confidence.
 
 ### Acceptance criteria
 
-- [ ] Developer docs cover per-service image build, env setup, and run commands.
-- [ ] Operator docs cover startup dependencies, failure modes, and troubleshooting
+- [x] Developer docs cover per-service image build, env setup, and run commands.
+- [x] Operator docs cover startup dependencies, failure modes, and troubleshooting
       basics.
-- [ ] Verification commands for per-service build/start and stack smoke are
+- [x] Verification commands for per-service build/start and stack smoke are
       documented in a CI-friendly sequence.
-- [ ] Scope boundaries (backend-only, client exclusions) are explicit in final
+- [x] Scope boundaries (backend-only, client exclusions) are explicit in final
       docs.
